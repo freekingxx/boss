@@ -172,6 +172,7 @@
       apiEndpoints: [],
       debugMode: false,
       notifyEnabled: true,
+      notifyThreshold: 70,
       notifySound: true,
       roleKey: '',
       configUrl: '',
@@ -201,6 +202,7 @@
     }
     // 同步关键词到规则
     syncKeywordsToRules();
+    normalizeNotifyThreshold();
     return config;
   }
 
@@ -214,14 +216,24 @@
   }
 
   function mergeConfig(saved, defaults) {
+    const notifyThreshold = typeof saved.notifyThreshold === 'number'
+      ? saved.notifyThreshold
+      : (typeof saved.thresholdHigh === 'number' ? saved.thresholdHigh : defaults.notifyThreshold);
     return {
       ...defaults,
       ...saved,
+      notifyThreshold,
       rules: saved.rules || defaults.rules,
       positiveKeywords: saved.positiveKeywords || defaults.positiveKeywords,
       negativeKeywords: saved.negativeKeywords || defaults.negativeKeywords,
       customSchools: saved.customSchools || defaults.customSchools
     };
+  }
+
+  function normalizeNotifyThreshold() {
+    const high = typeof config.thresholdHigh === 'number' ? config.thresholdHigh : 0;
+    const raw = typeof config.notifyThreshold === 'number' ? config.notifyThreshold : high;
+    config.notifyThreshold = Math.max(high, Math.min(100, raw));
   }
 
   function syncKeywordsToRules() {
@@ -273,6 +285,7 @@
     config.thresholdLow = preset.thresholdLow;
     config.salaryMax = preset.salaryMax;
     syncKeywordsToRules();
+    normalizeNotifyThreshold();
     saveConfig();
     rescoreAllCards();
   }
@@ -343,6 +356,7 @@
       config.salaryMax = remoteData.salaryMax;
     }
     syncKeywordsToRules();
+    normalizeNotifyThreshold();
     saveConfig();
     rescoreAllCards();
   }
@@ -682,7 +696,7 @@
 
   function notifyHighScoreCandidate(candidate, result, cardElement) {
     if (!config.notifyEnabled) return;
-    if (result.level !== 'high') return;
+    if (result.score < config.notifyThreshold) return;
     const key = candidate.name + '_' + result.score;
     if (notifiedCandidates.has(key)) return;
     notifiedCandidates.add(key);
@@ -1391,11 +1405,28 @@
       let matchCount = 0;
       const checkCount = Math.min(children.length, 5);
       for (let i = 0; i < checkCount; i++) {
-        const text = children[i].textContent || '';
+        const child = children[i];
+        const text = child.textContent || '';
+        const html = child.innerHTML || '';
+
+        // 排除明显不是候选人卡片的元素
+        const isTimeline = /timeline|history|record|experience-item|work-item/i.test(child.className);
+        const isNote = /note|remark|comment|memo/i.test(child.className);
+        const isSmall = child.offsetHeight < 60; // 候选人卡片通常较高
+        if (isTimeline || isNote || isSmall) continue;
+
+        // 候选人卡片必须有的强特征
+        const hasAvatar = /<img|avatar|photo/i.test(html);
+        const hasName = /[\u4e00-\u9fa5]{2,4}(?=\s|$|·|，|,)/.test(text); // 2-4个汉字的姓名
         const hasEdu = /本科|硕士|博士|大专/.test(text);
         const hasExp = /\d+年|经验|在职|离职/.test(text);
         const hasSalary = /\d+[Kk]|\d+-\d+/.test(text);
-        if ((hasEdu ? 1 : 0) + (hasExp ? 1 : 0) + (hasSalary ? 1 : 0) >= 2) {
+
+        // 必须有姓名或头像，且至少有2个其他特征
+        const hasIdentity = hasAvatar || hasName;
+        const featureCount = (hasEdu ? 1 : 0) + (hasExp ? 1 : 0) + (hasSalary ? 1 : 0);
+
+        if (hasIdentity && featureCount >= 2) {
           matchCount++;
         }
       }
@@ -1428,6 +1459,12 @@
   // 为单个卡片渲染评分
   function renderCard(card) {
     if (card.dataset.bhScored) return;
+
+    // 跳过过小的元素（时间线条目、备注等）
+    if (card.offsetHeight < 60 || card.offsetWidth < 200) {
+      card.dataset.bhScored = 'skip';
+      return;
+    }
 
     // 获取候选人数据（优先API数据，回退DOM解析）
     let candidate;
@@ -1791,6 +1828,8 @@
 
     content.appendChild(createSlider('高匹配 (绿色)', config.thresholdHigh, 0, 100, (v) => {
       config.thresholdHigh = v;
+      normalizeNotifyThreshold();
+      syncNotifyThresholdControl();
       saveConfig();
       rescoreAllCards();
     }));
@@ -2127,6 +2166,22 @@
     notifyRow.appendChild(notifyLabel);
     content.appendChild(notifyRow);
 
+    const notifyThresholdHint = document.createElement('p');
+    notifyThresholdHint.style.cssText = 'font-size:12px; color:#666; margin:0 0 6px 24px;';
+    notifyThresholdHint.textContent = '仅当候选人分数达到该阈值时通知，且不会低于“高匹配”阈值。';
+    content.appendChild(notifyThresholdHint);
+
+    const notifyThresholdSlider = createSlider('通知分数下限', config.notifyThreshold, config.thresholdHigh, 100, (v) => {
+      config.notifyThreshold = v;
+      normalizeNotifyThreshold();
+      syncNotifyThresholdControl();
+      saveConfig();
+    });
+    notifyThresholdSlider.dataset.bhControl = 'notify-threshold-row';
+    notifyThresholdSlider.querySelector('input[type="range"]').dataset.bhControl = 'notify-threshold';
+    notifyThresholdSlider.querySelector('.value').dataset.bhControl = 'notify-threshold-value';
+    content.appendChild(notifyThresholdSlider);
+
     // 提示音开关
     const soundRow = document.createElement('div');
     soundRow.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:12px;';
@@ -2250,6 +2305,16 @@
     row.appendChild(slider);
     row.appendChild(valueEl);
     return row;
+  }
+
+  function syncNotifyThresholdControl() {
+    if (!panel) return;
+    const slider = panel.querySelector('input[data-bh-control="notify-threshold"]');
+    const valueEl = panel.querySelector('[data-bh-control="notify-threshold-value"]');
+    if (!slider || !valueEl) return;
+    slider.min = config.thresholdHigh;
+    slider.value = config.notifyThreshold;
+    valueEl.textContent = config.notifyThreshold;
   }
 
   function handleImport() {
