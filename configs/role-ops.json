@@ -67,6 +67,10 @@
     {
       "id": "salary_over", "name": "期望薪资超预算", "field": "salaryMax",
       "type": "knockout", "operator": "gt", "value": 0, "score": -100, "enabled": false
+    },
+    {
+      "id": "gender_mismatch", "name": "性别不符扣分", "field": "gender",
+      "type": "penalty", "operator": "checkGender", "value": null, "score": -50, "enabled": true
     }
   ],
   "positiveKeywords": ["生命周期运营", "用户分层运营", "增长运营", "用户增长", "内容运营", "社区运营", "活动策划", "数据分析", "ROI", "转化率", "私域", "用户留存", "拉新", "促活", "AARRR", "漏斗", "A/B测试", "公众号", "短视频", "KOL", "新媒体"],

@@ -49,6 +49,10 @@
     {
       "id": "salary_over", "name": "期望薪资超预算", "field": "salaryMax",
       "type": "knockout", "operator": "gt", "value": 0, "score": -100, "enabled": false
+    },
+    {
+      "id": "gender_mismatch", "name": "性别不符扣分", "field": "gender",
+      "type": "penalty", "operator": "checkGender", "value": null, "score": -50, "enabled": true
     }
   ],
   "positiveKeywords": ["React", "Vue", "TypeScript", "Node", "Go", "Java", "Python", "Rust", "Kubernetes", "Docker", "微服务", "分布式"],

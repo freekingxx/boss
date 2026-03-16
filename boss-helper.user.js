@@ -177,7 +177,8 @@
       roleKey: '',
       configUrl: '',
       lastRemoteSync: 0,
-      lastSyncedRole: ''
+      lastSyncedRole: '',
+      expectedGender: ''
     };
   }
 
@@ -538,6 +539,15 @@
     const skills = raw.skills || raw.skillList || raw.tags || [];
     const status = raw.status || raw.jobStatus || raw.activeStatus || '';
 
+    // 解析性别
+    let gender = null;
+    if (raw.gender === 1 || raw.gender === '1' || raw.genderName === '男') gender = '男';
+    else if (raw.gender === 0 || raw.gender === 2 || raw.gender === '0' || raw.gender === '2' || raw.genderName === '女') gender = '女';
+    if (!gender) {
+      const genderMatch = text.match(/(?:^|[·\s",:])?(男|女)(?:[·\s",:]|$)/);
+      if (genderMatch) gender = genderMatch[1];
+    }
+
     // 解析薪资范围
     let salaryMin = 0, salaryMax = 0;
     const salaryStr = typeof salary === 'string' ? salary : '';
@@ -559,6 +569,7 @@
       salaryDesc: salaryStr,
       skills: Array.isArray(skills) ? skills.map(s => typeof s === 'string' ? s : s.name || '') : [],
       status: status || null,
+      gender: gender,
       rawText: text,
       source: 'api'
     };
@@ -634,6 +645,15 @@
             score += delta;
             matchedRules.push({ ...rule, applied: true, matchedKeywords, effectiveScore: delta });
           }
+        }
+        continue;
+      }
+
+      // checkGender: 对比候选人性别与期望性别，不符则扣分
+      if (rule.operator === 'checkGender') {
+        if (config.expectedGender && typeof fieldValue === 'string' && fieldValue && fieldValue !== config.expectedGender) {
+          score += rule.score;
+          matchedRules.push({ ...rule, applied: true, effectiveScore: rule.score });
         }
         continue;
       }
@@ -1839,6 +1859,35 @@
       });
     });
 
+    // 期望性别
+    const genderRow = document.createElement('div');
+    genderRow.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-top: 10px;';
+
+    const genderLabel = document.createElement('label');
+    genderLabel.textContent = '期望性别:';
+    genderLabel.style.cssText = 'flex-shrink: 0; font-weight: 500;';
+
+    const genderSelect = document.createElement('select');
+    genderSelect.style.cssText = 'flex: 1; padding: 6px 8px; border: 1px solid #d9d9d9; border-radius: 4px; font-size: 13px;';
+
+    [['', '不限'], ['男', '男'], ['女', '女']].forEach(([val, label]) => {
+      const opt = document.createElement('option');
+      opt.value = val;
+      opt.textContent = label;
+      if (config.expectedGender === val) opt.selected = true;
+      genderSelect.appendChild(opt);
+    });
+
+    genderSelect.addEventListener('change', () => {
+      config.expectedGender = genderSelect.value;
+      saveConfig();
+      rescoreAllCards();
+    });
+
+    genderRow.appendChild(genderLabel);
+    genderRow.appendChild(genderSelect);
+    content.appendChild(genderRow);
+
     return section;
   }
 
@@ -1988,7 +2037,8 @@
       { value: 'regex', label: '正则匹配' },
       { value: 'schoolLevel', label: '院校等级' },
       { value: 'gtPerUnit', label: '每超1单位' },
-      { value: 'containsAnyWord', label: '包含任一词(精确)' }
+      { value: 'containsAnyWord', label: '包含任一词(精确)' },
+      { value: 'checkGender', label: '性别校验' }
     ];
 
     const form = document.createElement('div');

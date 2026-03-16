@@ -49,6 +49,10 @@
     {
       "id": "salary_over", "name": "期望薪资超预算", "field": "salaryMax",
       "type": "knockout", "operator": "gt", "value": 0, "score": -100, "enabled": false
+    },
+    {
+      "id": "gender_mismatch", "name": "性别不符扣分", "field": "gender",
+      "type": "penalty", "operator": "checkGender", "value": null, "score": -50, "enabled": true
     }
   ],
   "positiveKeywords": ["产品经理", "产品设计", "需求分析", "用户研究", "原型", "PRD", "数据驱动", "A/B测试", "用户画像", "竞品分析", "项目管理", "敏捷", "Scrum", "B端", "C端", "商业化"],

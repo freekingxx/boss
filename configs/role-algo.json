@@ -97,6 +97,10 @@
     {
       "id": "salary_over", "name": "期望薪资超预算", "field": "salaryMax",
       "type": "knockout", "operator": "gt", "value": 0, "score": -100, "enabled": false
+    },
+    {
+      "id": "gender_mismatch", "name": "性别不符扣分", "field": "gender",
+      "type": "penalty", "operator": "checkGender", "value": null, "score": -50, "enabled": true
     }
   ],
   "positiveKeywords": ["C++", "算法", "数据结构", "量化", "高频", "低延迟", "多线程", "并发", "性能优化", "Linux", "系统编程", "STL", "CUDA", "FPGA", "网络编程", "TCP", "内存管理", "Boost"],
