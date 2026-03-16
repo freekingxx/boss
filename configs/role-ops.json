@@ -1,6 +1,6 @@
 {
   "name": "运营岗",
-  "version": 1,
+  "version": 2,
   "rules": [
     {
       "id": "edu_master", "name": "硕士及以上加分", "field": "education",
@@ -8,27 +8,45 @@
     },
     {
       "id": "edu_below", "name": "大专及以下减分", "field": "education",
-      "type": "penalty", "operator": "in", "value": ["高中", "中专", "初中"], "score": -20, "enabled": true
+      "type": "penalty", "operator": "in", "value": ["大专", "高中", "中专", "初中"], "score": -50, "enabled": true
     },
     {
       "id": "school_985", "name": "985院校加分", "field": "school",
-      "type": "bonus", "operator": "schoolLevel", "value": "985", "score": 10, "enabled": true
+      "type": "bonus", "operator": "schoolLevel", "value": "985", "score": 25, "enabled": true
     },
     {
       "id": "school_211", "name": "211院校加分", "field": "school",
-      "type": "bonus", "operator": "schoolLevel", "value": "211", "score": 5, "enabled": true
+      "type": "bonus", "operator": "schoolLevel", "value": "211", "score": 15, "enabled": true
     },
     {
       "id": "school_overseas", "name": "海外名校加分", "field": "school",
-      "type": "bonus", "operator": "schoolLevel", "value": "overseas", "score": 10, "enabled": true
+      "type": "bonus", "operator": "schoolLevel", "value": "overseas", "score": 15, "enabled": true
     },
     {
-      "id": "exp_ideal", "name": "2-5年经验优先", "field": "experience",
-      "type": "bonus", "operator": "between", "value": [2, 5], "score": 15, "enabled": true
+      "id": "school_good_tier1", "name": "优秀一本（非211）轻微扣分", "field": "school",
+      "type": "penalty", "operator": "containsAny",
+      "value": ["双非", "二本", "三本", "民办", "独立学院"],
+      "score": -10, "enabled": true
     },
     {
-      "id": "company_top", "name": "大厂经历加分", "field": "company",
-      "type": "bonus", "operator": "listMatch", "value": "topCompanies", "score": 10, "enabled": true
+      "id": "major_stem_finance", "name": "理工科/金融经济专业加分", "field": "rawText",
+      "type": "bonus", "operator": "containsAny",
+      "value": ["计算机", "软件工程", "信息", "数学", "统计", "物理", "电子", "通信", "自动化", "数据科学", "人工智能", "金融", "经济", "金融学", "经济学", "财务", "会计", "工商管理", "市场营销", "国际贸易"],
+      "score": 8, "enabled": true
+    },
+    {
+      "id": "major_exclude", "name": "明显不相关专业减分", "field": "rawText",
+      "type": "penalty", "operator": "containsAny",
+      "value": ["土木工程", "建筑学", "农学", "畜牧", "林学", "临床医学", "护理学", "中医", "药学", "美术", "音乐", "体育"],
+      "score": -25, "enabled": true
+    },
+    {
+      "id": "exp_ideal", "name": "1-5年经验优先", "field": "experience",
+      "type": "bonus", "operator": "between", "value": [1, 5], "score": 15, "enabled": true
+    },
+    {
+      "id": "company_top", "name": "互联网大厂经历加分", "field": "company",
+      "type": "bonus", "operator": "listMatch", "value": "topCompanies", "score": 15, "enabled": true
     },
     {
       "id": "keyword_positive", "name": "包含加分关键词", "field": "rawText",
@@ -43,9 +61,9 @@
       "type": "knockout", "operator": "gt", "value": 0, "score": -100, "enabled": false
     }
   ],
-  "positiveKeywords": ["用户增长", "内容运营", "社区运营", "活动策划", "数据分析", "ROI", "转化率", "私域", "公众号", "短视频", "直播", "KOL", "新媒体", "SEO", "SEM", "投放"],
-  "negativeKeywords": ["实习", "兼职"],
-  "thresholdHigh": 60,
+  "positiveKeywords": ["生命周期运营", "用户分层运营", "增长运营", "用户增长", "内容运营", "社区运营", "活动策划", "数据分析", "ROI", "转化率", "私域", "用户留存", "拉新", "促活", "AARRR", "漏斗", "A/B测试", "公众号", "短视频", "KOL", "新媒体"],
+  "negativeKeywords": ["实习", "兼职", "培训"],
+  "thresholdHigh": 65,
   "thresholdLow": 35,
   "salaryMax": 0
 }
