@@ -50,11 +50,11 @@
     },
     {
       "id": "keyword_positive", "name": "包含加分关键词", "field": "rawText",
-      "type": "bonus", "operator": "containsAny", "value": [], "score": 10, "enabled": true
+      "type": "bonus", "operator": "containsAny", "value": [], "score": 15, "minMatchCount": 3, "enabled": true
     },
     {
       "id": "keyword_negative", "name": "包含减分关键词", "field": "rawText",
-      "type": "penalty", "operator": "containsAny", "value": [], "score": -15, "enabled": true
+      "type": "penalty", "operator": "containsAny", "value": [], "score": -15, "minMatchCount": 1, "enabled": true
     },
     {
       "id": "age_penalty", "name": "年龄超限递增扣分", "field": "age",

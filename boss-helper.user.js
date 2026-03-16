@@ -178,7 +178,11 @@
       configUrl: '',
       lastRemoteSync: 0,
       lastSyncedRole: '',
-      expectedGender: ''
+      expectedGender: '',
+      keywordBonusMinMatch: 3,
+      keywordBonusScore: 15,
+      keywordPenaltyMinMatch: 1,
+      keywordPenaltyScore: -15
     };
   }
 
@@ -240,9 +244,17 @@
 
   function syncKeywordsToRules() {
     const posRule = config.rules.find(r => r.id === 'keyword_positive');
-    if (posRule) posRule.value = config.positiveKeywords;
+    if (posRule) {
+      posRule.value = config.positiveKeywords;
+      posRule.minMatchCount = config.keywordBonusMinMatch;
+      posRule.score = config.keywordBonusScore;
+    }
     const negRule = config.rules.find(r => r.id === 'keyword_negative');
-    if (negRule) negRule.value = config.negativeKeywords;
+    if (negRule) {
+      negRule.value = config.negativeKeywords;
+      negRule.minMatchCount = config.keywordPenaltyMinMatch;
+      negRule.score = config.keywordPenaltyScore;
+    }
     const salaryRule = config.rules.find(r => r.id === 'salary_over');
     if (salaryRule) {
       salaryRule.value = config.salaryMax;
@@ -598,7 +610,7 @@
 
       const fieldValue = candidate[rule.field];
 
-      // containsAny 特殊处理：每个匹配的关键词独立计分
+      // containsAny 特殊处理
       if (rule.operator === 'containsAny' && Array.isArray(rule.value) && rule.value.length > 0) {
         const text = typeof fieldValue === 'string' ? fieldValue : '';
         const matchedKeywords = rule.value.filter(v => text.includes(v));
@@ -606,9 +618,19 @@
           if (rule.type === 'knockout') {
             return { score: 0, level: 'low', matchedRules: [{ ...rule, applied: true, matchedKeywords }] };
           }
-          const delta = rule.score * matchedKeywords.length;
-          score += delta;
-          matchedRules.push({ ...rule, applied: true, matchedKeywords, effectiveScore: delta });
+          const minMatch = typeof rule.minMatchCount === 'number' ? rule.minMatchCount : 0;
+          if (minMatch > 0) {
+            // 阈值模式：命中数 >= minMatchCount 时计固定分值（不按个数翻倍）
+            if (matchedKeywords.length >= minMatch) {
+              score += rule.score;
+              matchedRules.push({ ...rule, applied: true, matchedKeywords, effectiveScore: rule.score });
+            }
+          } else {
+            // 默认模式：每个关键词独立计分
+            const delta = rule.score * matchedKeywords.length;
+            score += delta;
+            matchedRules.push({ ...rule, applied: true, matchedKeywords, effectiveScore: delta });
+          }
         }
         continue;
       }
@@ -2134,6 +2156,61 @@
   function createKeywordSection(title, configKey, color) {
     const section = createSection(title);
     const content = section.querySelector(`.${SCRIPT_PREFIX}-section-content`);
+
+    const isPositive = configKey === 'positiveKeywords';
+    const minMatchKey = isPositive ? 'keywordBonusMinMatch' : 'keywordPenaltyMinMatch';
+    const scoreKey = isPositive ? 'keywordBonusScore' : 'keywordPenaltyScore';
+
+    // 阈值配置行
+    const configRow = document.createElement('div');
+    configRow.style.cssText = 'display: flex; align-items: center; gap: 6px; margin-bottom: 10px; font-size: 13px;';
+
+    const minLabel = document.createElement('span');
+    minLabel.textContent = isPositive ? '满' : '匹配';
+    configRow.appendChild(minLabel);
+
+    const minInput = document.createElement('input');
+    minInput.type = 'number';
+    minInput.min = '1';
+    minInput.max = '99';
+    minInput.value = config[minMatchKey] || 1;
+    minInput.style.cssText = 'width: 48px; padding: 4px 6px; border: 1px solid #d9d9d9; border-radius: 4px; text-align: center; font-size: 13px;';
+    configRow.appendChild(minInput);
+
+    const midLabel = document.createElement('span');
+    midLabel.textContent = isPositive ? '条及以上' : '条及以上';
+    configRow.appendChild(midLabel);
+
+    const scoreLabel = document.createElement('span');
+    scoreLabel.textContent = isPositive ? '加' : '扣';
+    scoreLabel.style.marginLeft = '6px';
+    configRow.appendChild(scoreLabel);
+
+    const scoreInput = document.createElement('input');
+    scoreInput.type = 'number';
+    scoreInput.min = '1';
+    scoreInput.max = '100';
+    scoreInput.value = Math.abs(config[scoreKey] || 15);
+    scoreInput.style.cssText = 'width: 48px; padding: 4px 6px; border: 1px solid #d9d9d9; border-radius: 4px; text-align: center; font-size: 13px;';
+    configRow.appendChild(scoreInput);
+
+    const unitLabel = document.createElement('span');
+    unitLabel.textContent = '分';
+    configRow.appendChild(unitLabel);
+
+    const saveParams = () => {
+      config[minMatchKey] = Math.max(1, parseInt(minInput.value) || 1);
+      config[scoreKey] = isPositive
+        ? Math.abs(parseInt(scoreInput.value) || 15)
+        : -Math.abs(parseInt(scoreInput.value) || 15);
+      syncKeywordsToRules();
+      saveConfig();
+      rescoreAllCards();
+    };
+    minInput.addEventListener('change', saveParams);
+    scoreInput.addEventListener('change', saveParams);
+
+    content.appendChild(configRow);
 
     const tagsContainer = document.createElement('div');
     tagsContainer.className = `${SCRIPT_PREFIX}-tags`;
