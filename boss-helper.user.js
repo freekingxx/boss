@@ -176,7 +176,8 @@
       notifySound: true,
       roleKey: '',
       configUrl: '',
-      lastRemoteSync: 0
+      lastRemoteSync: 0,
+      lastSyncedRole: ''
     };
   }
 
@@ -340,12 +341,17 @@
     if (remoteData.rules && Array.isArray(remoteData.rules)) {
       config.rules = JSON.parse(JSON.stringify(remoteData.rules));
     }
-    if (remoteData.positiveKeywords) {
-      config.positiveKeywords = [...remoteData.positiveKeywords];
+    // 关键词仅在切换角色时覆盖，同角色再次同步保留本地编辑
+    const isNewRole = !config.lastSyncedRole || config.lastSyncedRole !== (remoteData.name || '');
+    if (isNewRole) {
+      if (remoteData.positiveKeywords) {
+        config.positiveKeywords = [...remoteData.positiveKeywords];
+      }
+      if (remoteData.negativeKeywords) {
+        config.negativeKeywords = [...remoteData.negativeKeywords];
+      }
     }
-    if (remoteData.negativeKeywords) {
-      config.negativeKeywords = [...remoteData.negativeKeywords];
-    }
+    config.lastSyncedRole = remoteData.name || '';
     if (typeof remoteData.thresholdHigh === 'number') {
       config.thresholdHigh = remoteData.thresholdHigh;
     }
@@ -592,6 +598,17 @@
           const delta = rule.score * matchedKeywords.length;
           score += delta;
           matchedRules.push({ ...rule, applied: true, matchedKeywords, effectiveScore: delta });
+        }
+        continue;
+      }
+
+      // gtPerUnit 特殊处理：每超出一个单位独立计分（如年龄每超1岁扣N分）
+      if (rule.operator === 'gtPerUnit' && typeof fieldValue === 'number' && typeof rule.value === 'number') {
+        if (fieldValue > rule.value) {
+          const units = Math.floor(fieldValue - rule.value);
+          const delta = rule.score * units;
+          score += delta;
+          matchedRules.push({ ...rule, applied: true, effectiveScore: delta });
         }
         continue;
       }
@@ -1944,7 +1961,8 @@
       { value: 'notContains', label: '不包含' },
       { value: 'containsAny', label: '包含任一' },
       { value: 'regex', label: '正则匹配' },
-      { value: 'schoolLevel', label: '院校等级' }
+      { value: 'schoolLevel', label: '院校等级' },
+      { value: 'gtPerUnit', label: '每超1单位' }
     ];
 
     const form = document.createElement('div');

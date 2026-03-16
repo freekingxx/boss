@@ -57,6 +57,14 @@
       "type": "penalty", "operator": "containsAny", "value": [], "score": -15, "enabled": true
     },
     {
+      "id": "age_penalty", "name": "年龄超限递增扣分", "field": "age",
+      "type": "penalty", "operator": "gtPerUnit", "value": 35, "score": -5, "enabled": true
+    },
+    {
+      "id": "no_experience", "name": "无工作经历减分", "field": "experience",
+      "type": "penalty", "operator": "in", "value": [null, 0], "score": -30, "enabled": true
+    },
+    {
       "id": "salary_over", "name": "期望薪资超预算", "field": "salaryMax",
       "type": "knockout", "operator": "gt", "value": 0, "score": -100, "enabled": false
     }
