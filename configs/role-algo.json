@@ -1,0 +1,93 @@
+{
+  "name": "算法岗(C++)",
+  "version": 1,
+  "rules": [
+    {
+      "id": "edu_master", "name": "硕士及以上加分", "field": "education",
+      "type": "bonus", "operator": "in", "value": ["硕士", "博士", "MBA"], "score": 15, "enabled": true
+    },
+    {
+      "id": "edu_below", "name": "大专及以下重扣", "field": "education",
+      "type": "penalty", "operator": "in", "value": ["大专", "高中", "中专", "初中"], "score": -50, "enabled": true
+    },
+    {
+      "id": "school_985", "name": "985院校加分", "field": "school",
+      "type": "bonus", "operator": "schoolLevel", "value": "985", "score": 25, "enabled": true
+    },
+    {
+      "id": "school_211", "name": "211院校加分", "field": "school",
+      "type": "bonus", "operator": "schoolLevel", "value": "211", "score": 15, "enabled": true
+    },
+    {
+      "id": "school_overseas", "name": "海外名校加分", "field": "school",
+      "type": "bonus", "operator": "schoolLevel", "value": "overseas", "score": 20, "enabled": true
+    },
+    {
+      "id": "school_low_tier", "name": "低层次院校减分", "field": "school",
+      "type": "penalty", "operator": "containsAny",
+      "value": ["职业技术学院", "职业学院", "技师学院", "专科学校", "技工学校", "高等专科"],
+      "score": -20, "enabled": true
+    },
+    {
+      "id": "edu_non_fulltime", "name": "非全日制学历减分", "field": "rawText",
+      "type": "penalty", "operator": "containsAny",
+      "value": ["非全日制", "自考", "函授", "成人教育", "网络教育", "电大", "开放大学", "成人高考", "自学考试"],
+      "score": -30, "enabled": true
+    },
+    {
+      "id": "acm_award", "name": "ACM/竞赛获奖加分", "field": "rawText",
+      "type": "bonus", "operator": "containsAny",
+      "value": ["ACM", "ICPC", "NOI", "IOI"],
+      "score": 20, "enabled": true
+    },
+    {
+      "id": "exp_ideal", "name": "1-7年经验优先", "field": "experience",
+      "type": "bonus", "operator": "between", "value": [1, 7], "score": 15, "enabled": true
+    },
+    {
+      "id": "company_top", "name": "大厂经历加分", "field": "company",
+      "type": "bonus", "operator": "listMatch", "value": "topCompanies", "score": 15, "enabled": true
+    },
+    {
+      "id": "position_non_cpp", "name": "非C++职位减分", "field": "rawText",
+      "type": "penalty", "operator": "containsAny",
+      "value": ["Java开发", "Java工程师", "Python开发", "Python工程师", "Golang开发", "Go开发", "Go工程师", "前端开发", "前端工程师", "PHP开发", ".NET开发", "Android开发", "iOS开发", "测试开发", "运维工程师"],
+      "score": -20, "enabled": true
+    },
+    {
+      "id": "major_non_cs", "name": "非计算机专业减分", "field": "rawText",
+      "type": "penalty", "operator": "containsAny",
+      "value": ["土木工程", "建筑学", "城市规划", "农学", "园艺", "畜牧", "林学", "文学", "历史学", "哲学", "社会学", "教育学", "法学", "临床医学", "护理学", "中医", "药学", "美术", "音乐", "体育", "新闻学", "广告学"],
+      "score": -40, "enabled": true
+    },
+    {
+      "id": "finance_bg", "name": "金融背景加分", "field": "rawText",
+      "type": "bonus", "operator": "containsAny",
+      "value": ["量化", "券商", "基金", "期货", "交易系统", "高频交易", "低延迟", "证券", "投行", "对冲基金", "私募"],
+      "score": 10, "enabled": true
+    },
+    {
+      "id": "finance_exclude", "name": "恒生万德背景减分", "field": "rawText",
+      "type": "penalty", "operator": "containsAny",
+      "value": ["恒生电子", "恒生", "万得", "Wind资讯"],
+      "score": -15, "enabled": true
+    },
+    {
+      "id": "keyword_positive", "name": "包含加分关键词", "field": "rawText",
+      "type": "bonus", "operator": "containsAny", "value": [], "score": 10, "enabled": true
+    },
+    {
+      "id": "keyword_negative", "name": "包含减分关键词", "field": "rawText",
+      "type": "penalty", "operator": "containsAny", "value": [], "score": -15, "enabled": true
+    },
+    {
+      "id": "salary_over", "name": "期望薪资超预算", "field": "salaryMax",
+      "type": "knockout", "operator": "gt", "value": 0, "score": -100, "enabled": false
+    }
+  ],
+  "positiveKeywords": ["C++", "算法", "数据结构", "量化", "高频", "低延迟", "多线程", "并发", "性能优化", "Linux", "系统编程", "STL", "CUDA", "FPGA", "网络编程", "TCP", "内存管理", "Boost"],
+  "negativeKeywords": ["外包", "培训", "实习", "兼职"],
+  "thresholdHigh": 70,
+  "thresholdLow": 40,
+  "salaryMax": 0
+}

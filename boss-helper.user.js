@@ -31,6 +31,7 @@
   const GITHUB_BASE = 'https://raw.githubusercontent.com/freekingxx/boss/main/configs';
   const ROLE_CONFIGS = {
     dev:     { name: '开发岗', url: `${GITHUB_BASE}/role-dev.json` },
+    algo:    { name: '算法岗(C++)', url: `${GITHUB_BASE}/role-algo.json` },
     ops:     { name: '运营岗', url: `${GITHUB_BASE}/role-ops.json` },
     product: { name: '产品岗', url: `${GITHUB_BASE}/role-pm.json` }
   };
