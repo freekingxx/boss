@@ -90,39 +90,39 @@
   const DEFAULT_RULES = [
     {
       id: 'edu_master', name: '硕士及以上加分', field: 'education',
-      type: 'bonus', operator: 'in', value: ['硕士', '博士', 'MBA'], score: 20, enabled: true
+      type: 'bonus', operator: 'in', value: ['硕士', '博士', 'MBA'], score: 15, enabled: true
     },
     {
       id: 'edu_below', name: '大专及以下减分', field: 'education',
-      type: 'penalty', operator: 'in', value: ['大专', '高中', '中专', '初中'], score: -30, enabled: true
+      type: 'penalty', operator: 'in', value: ['大专', '高中', '中专', '初中'], score: -25, enabled: true
     },
     {
       id: 'school_985', name: '985院校加分', field: 'school',
-      type: 'bonus', operator: 'schoolLevel', value: '985', score: 25, enabled: true
+      type: 'bonus', operator: 'schoolLevel', value: '985', score: 18, enabled: true
     },
     {
       id: 'school_211', name: '211院校加分', field: 'school',
-      type: 'bonus', operator: 'schoolLevel', value: '211', score: 15, enabled: true
+      type: 'bonus', operator: 'schoolLevel', value: '211', score: 10, enabled: true
     },
     {
       id: 'school_overseas', name: '海外名校加分', field: 'school',
-      type: 'bonus', operator: 'schoolLevel', value: 'overseas', score: 20, enabled: true
+      type: 'bonus', operator: 'schoolLevel', value: 'overseas', score: 15, enabled: true
     },
     {
       id: 'exp_ideal', name: '3-7年经验优先', field: 'experience',
-      type: 'bonus', operator: 'between', value: [3, 7], score: 15, enabled: true
+      type: 'bonus', operator: 'between', value: [3, 7], score: 12, enabled: false
     },
     {
       id: 'company_top', name: '大厂经历加分', field: 'company',
-      type: 'bonus', operator: 'listMatch', value: 'topCompanies', score: 15, enabled: true
+      type: 'bonus', operator: 'listMatch', value: 'topCompanies', score: 12, enabled: true
     },
     {
       id: 'keyword_positive', name: '包含加分关键词', field: 'rawText',
-      type: 'bonus', operator: 'containsAny', value: [], score: 10, enabled: true
+      type: 'bonus', operator: 'containsAny', value: [], score: 8, enabled: true
     },
     {
       id: 'keyword_negative', name: '包含减分关键词', field: 'rawText',
-      type: 'penalty', operator: 'containsAny', value: [], score: -15, enabled: true
+      type: 'penalty', operator: 'containsAny', value: [], score: -12, enabled: true
     },
     {
       id: 'salary_over', name: '期望薪资超预算', field: 'salaryMax',
@@ -155,6 +155,14 @@
       thresholdHigh: 60,
       thresholdLow: 30,
       salaryMax: 0
+    },
+    cpp_algo: {
+      name: 'C++算法岗',
+      positiveKeywords: ['C++', 'STL', '模板', '算法', '数据结构', '性能优化', 'Linux', 'CMake', 'Boost', 'Qt', '多线程', '并发', '内存管理', 'CUDA', 'OpenCV', '深度学习', 'TensorFlow', 'PyTorch', 'ONNX', '模型优化', '推理引擎'],
+      negativeKeywords: ['外包', '培训', '实习', '转行'],
+      thresholdHigh: 75,
+      thresholdLow: 45,
+      salaryMax: 0
     }
   };
 
@@ -162,8 +170,8 @@
   function getDefaultConfig() {
     return {
       rules: JSON.parse(JSON.stringify(DEFAULT_RULES)),
-      positiveKeywords: ['React', 'Vue', 'TypeScript', 'Node', 'Go', 'Java', 'Python'],
-      negativeKeywords: ['外包', '培训'],
+      positiveKeywords: ['C++', 'STL', '算法', '数据结构', '性能优化', 'Linux'],
+      negativeKeywords: ['外包', '培训', '转行'],
       customSchools: [],
       thresholdHigh: 70,
       thresholdLow: 40,
@@ -180,9 +188,10 @@
       lastSyncedRole: '',
       expectedGender: '',
       keywordBonusMinMatch: 3,
-      keywordBonusScore: 15,
+      keywordBonusScore: 12,
       keywordPenaltyMinMatch: 1,
-      keywordPenaltyScore: -15
+      keywordPenaltyScore: -12,
+      highlightKeywords: []
     };
   }
 
@@ -603,8 +612,9 @@
   // ============================================================
 
   function scoreCandidate(candidate) {
-    let score = 50; // 基准分
+    let score = 30; // 基准分（降低以提高难度）
     const matchedRules = [];
+    const highlightedKeywords = [];
 
     for (const rule of config.rules) {
       if (!rule.enabled) continue;
@@ -692,12 +702,22 @@
       }
     }
 
+    // 检查高亮关键词匹配
+    if (config.highlightKeywords && config.highlightKeywords.length > 0) {
+      const text = candidate.rawText || '';
+      config.highlightKeywords.forEach(keyword => {
+        if (text.includes(keyword)) {
+          highlightedKeywords.push(keyword);
+        }
+      });
+    }
+
     score = Math.max(0, Math.min(100, score));
     const level = score >= config.thresholdHigh ? 'high'
       : score >= config.thresholdLow ? 'medium'
         : 'low';
 
-    return { score, level, matchedRules };
+    return { score, level, matchedRules, highlightedKeywords };
   }
 
   function evaluateCondition(rule, fieldValue, candidate) {
@@ -1037,6 +1057,28 @@
       .${SCRIPT_PREFIX}-badge-high { background: #4CAF50; }
       .${SCRIPT_PREFIX}-badge-medium { background: #FF9800; }
       .${SCRIPT_PREFIX}-badge-low { background: #9E9E9E; }
+
+      /* 关键词匹配徽章 */
+      .${SCRIPT_PREFIX}-keyword-badge {
+        position: absolute;
+        top: 32px;
+        right: 8px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 500;
+        color: #fff;
+        background: #1677ff;
+        z-index: 100;
+        pointer-events: auto;
+        cursor: help;
+        line-height: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+        max-width: 200px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
 
       /* 卡片高亮 */
       .${SCRIPT_PREFIX}-card-high {
@@ -1591,10 +1633,19 @@
     badge.textContent = `${result.score}分`;
     card.appendChild(badge);
 
+    // 高亮关键词标签（显示在分数旁边）
+    if (result.highlightedKeywords && result.highlightedKeywords.length > 0) {
+      const keywordBadge = document.createElement('span');
+      keywordBadge.className = `${SCRIPT_PREFIX}-keyword-badge`;
+      keywordBadge.textContent = result.highlightedKeywords.join(', ');
+      keywordBadge.title = '匹配的关键词: ' + result.highlightedKeywords.join(', ');
+      card.appendChild(keywordBadge);
+    }
+
     // 悬停提示
     const tooltip = document.createElement('div');
     tooltip.className = `${SCRIPT_PREFIX}-tooltip`;
-    const lines = ['基准分: 50'];
+    const lines = ['基准分: 30'];
     if (result.matchedRules.length > 0) {
       result.matchedRules.forEach(r => {
         const es = r.effectiveScore || r.score;
@@ -1754,6 +1805,8 @@
     body.appendChild(createKeywordSection('加分关键词', 'positiveKeywords', '#4CAF50'));
     // 减分关键词
     body.appendChild(createKeywordSection('减分关键词', 'negativeKeywords', '#f44336'));
+    // 高亮关键词
+    body.appendChild(createHighlightKeywordSection());
     // 院校名单
     body.appendChild(createSchoolSection());
     // 高级设置
@@ -2262,6 +2315,77 @@
           const idx = parseInt(closeBtn.dataset.index);
           config[configKey].splice(idx, 1);
           syncKeywordsToRules();
+          saveConfig();
+          rescoreAllCards();
+          renderTags();
+        });
+      });
+    };
+
+    renderTags();
+    content.appendChild(tagsContainer);
+    return section;
+  }
+
+  // --- 高亮关键词 ---
+  function createHighlightKeywordSection() {
+    const section = createSection('高亮关键词匹配');
+    const content = section.querySelector(`.${SCRIPT_PREFIX}-section-content`);
+
+    // 说明文字
+    const hint = document.createElement('p');
+    hint.style.cssText = 'font-size:12px; color:#666; margin:0 0 10px;';
+    hint.textContent = '匹配到的关键词将显示在分数旁边的蓝色标签中（不影响评分）';
+    content.appendChild(hint);
+
+    const tagsContainer = document.createElement('div');
+    tagsContainer.className = `${SCRIPT_PREFIX}-tags`;
+
+    const renderTags = () => {
+      tagsContainer.innerHTML = '';
+      (config.highlightKeywords || []).forEach((keyword, i) => {
+        const tag = document.createElement('span');
+        tag.className = `${SCRIPT_PREFIX}-tag`;
+        tag.style.borderColor = '#1677ff40';
+        tag.style.background = '#1677ff10';
+        tag.style.color = '#1677ff';
+
+        const textNode = document.createTextNode(keyword);
+        tag.appendChild(textNode);
+
+        const closeBtn = document.createElement('span');
+        closeBtn.className = `${SCRIPT_PREFIX}-tag-close`;
+        closeBtn.dataset.index = i;
+        closeBtn.textContent = '\u00d7';
+        tag.appendChild(closeBtn);
+
+        tagsContainer.appendChild(tag);
+      });
+
+      // 输入框
+      const input = document.createElement('input');
+      input.className = `${SCRIPT_PREFIX}-tag-input`;
+      input.placeholder = '输入关键词后回车添加（如：C++、STL、模板等）';
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ',') {
+          e.preventDefault();
+          const val = input.value.trim().replace(/[,，]$/, '');
+          if (val && !(config.highlightKeywords || []).includes(val)) {
+            if (!config.highlightKeywords) config.highlightKeywords = [];
+            config.highlightKeywords.push(val);
+            saveConfig();
+            rescoreAllCards();
+            renderTags();
+          }
+        }
+      });
+      tagsContainer.appendChild(input);
+
+      // 删除标签
+      tagsContainer.querySelectorAll(`.${SCRIPT_PREFIX}-tag-close`).forEach(closeBtn => {
+        closeBtn.addEventListener('click', () => {
+          const idx = parseInt(closeBtn.dataset.index);
+          config.highlightKeywords.splice(idx, 1);
           saveConfig();
           rescoreAllCards();
           renderTags();
