@@ -1786,6 +1786,13 @@
       candidate = domCandidate;
     }
 
+    // API数据可能缺少结构化工作经历，用DOM文本提取的指标补充
+    if (candidate.jobCount === 0 && domCandidate.jobCount > 0) {
+      candidate.jobCount = domCandidate.jobCount;
+      candidate.gapCount = domCandidate.gapCount;
+      candidate.maxGapMonths = domCandidate.maxGapMonths;
+    }
+
     // 评分
     const result = scoreCandidate(candidate);
 
