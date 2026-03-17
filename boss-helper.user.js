@@ -667,36 +667,66 @@
   // 计算跳槽频率和空窗期指标
   function computeJobMetrics(raw, totalExp) {
     const workList = findWorkExpList(raw);
-    const jobCount = workList.length;
-    if (jobCount === 0) {
-      // 兜底：从文本中提取"N段工作经历"
-      const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
-      const m = text.match(/(\d+)\s*段/);
-      return { jobCount: m ? parseInt(m[1]) : 0, gapCount: 0, maxGapMonths: 0 };
-    }
+    let jobCount = workList.length;
 
-    // 提取日期并计算空窗期
-    const periods = [];
+    // 从结构化数据提取工作时间段
+    let periods = [];
     for (const exp of workList) {
       const start = parseWorkDate(exp.startDate || exp.startTime || exp.start || exp.beginTime || exp.startdate);
       const end = parseWorkDate(exp.endDate || exp.endTime || exp.end || exp.finishTime || exp.enddate);
       if (start) periods.push({ start, end });
     }
-    periods.sort((a, b) => a.start - b.start);
 
+    // 兜底：从文本中正则提取 "YYYY.MM - YYYY.MM" 格式的工作时间段
+    // 只匹配带月份的日期范围（如 2021.07 - 2024.03），跳过纯年份范围（通常是教育经历）
+    if (periods.length === 0) {
+      const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+      const regex = /(\d{4})[.\-/](\d{1,2})\s*[-–~]\s*(\d{4})[.\-/](\d{1,2})/g;
+      let m;
+      while ((m = regex.exec(text)) !== null) {
+        periods.push({
+          start: new Date(parseInt(m[1]), parseInt(m[2]) - 1),
+          end: new Date(parseInt(m[3]), parseInt(m[4]) - 1)
+        });
+      }
+      if (periods.length > 0) jobCount = periods.length;
+    }
+
+    if (periods.length === 0 && jobCount === 0) {
+      const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+      const m = text.match(/(\d+)\s*段/);
+      return { jobCount: m ? parseInt(m[1]) : 0, gapCount: 0, maxGapMonths: 0 };
+    }
+
+    periods.sort((a, b) => a.start - b.start);
     let gapCount = 0, maxGapMonths = 0;
+
+    // 检测工作之间的空窗
     for (let i = 1; i < periods.length; i++) {
       const prevEnd = periods[i - 1].end;
       const currStart = periods[i].start;
       if (prevEnd && currStart && currStart > prevEnd) {
         const months = (currStart - prevEnd) / (1000 * 60 * 60 * 24 * 30);
-        if (months > 1) { // 忽略 < 1个月的正常交接期
+        if (months > 1) {
           gapCount++;
           maxGapMonths = Math.max(maxGapMonths, months);
         }
       }
     }
-    return { jobCount, gapCount, maxGapMonths: Math.round(maxGapMonths) };
+
+    // 检测最后一份工作结束至今的空窗（当前失业期）
+    if (periods.length > 0) {
+      const lastEnd = periods[periods.length - 1].end;
+      if (lastEnd) {
+        const monthsToNow = (Date.now() - lastEnd.getTime()) / (1000 * 60 * 60 * 24 * 30);
+        if (monthsToNow > 3) {
+          gapCount++;
+          maxGapMonths = Math.max(maxGapMonths, monthsToNow);
+        }
+      }
+    }
+
+    return { jobCount: Math.max(jobCount, periods.length), gapCount, maxGapMonths: Math.round(maxGapMonths) };
   }
 
   // ============================================================
@@ -1117,9 +1147,7 @@
       salaryDesc: salaryMatch ? salaryMatch[0] : '',
       skills: [],
       status: extractMatch(text, /(在职|离职|在校|应届)/),
-      jobCount: extractNumber(text, /(\d+)\s*段/) || 0,
-      gapCount: 0,
-      maxGapMonths: 0,
+      ...computeJobMetrics(text, experience),
       rawText: text,
       source: 'dom'
     };
