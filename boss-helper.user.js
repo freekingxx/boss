@@ -21,14 +21,9 @@
 
 (function () {
   'use strict';
+  const isTopWindow = window.top === window.self;
 
-  // 只在主窗口运行，忽略 iframe
-  if (window.self !== window.top) {
-    console.log('[BOSS助手] 检测到 iframe，跳过执行');
-    return;
-  }
-
-  // 检查是否已经有实例在运行
+  // 检查是否已经有实例在运行（防止重复执行）
   if (window.__BOSS_HELPER_RUNNING__) {
     console.log('[BOSS助手] 检测到重复实例，跳过执行');
     return;
@@ -40,6 +35,7 @@
   // ============================================================
 
   const SCRIPT_PREFIX = 'bh';
+  const TOGGLE_BUTTON_ID = `${SCRIPT_PREFIX}-toggle-btn-root`;
   const CONFIG_KEY = 'boss_helper_config_v1';
   const PROBE_KEY = 'boss_helper_probe_mode';
   const REMOTE_CACHE_KEY = 'boss_helper_remote_config_v1';
@@ -1483,6 +1479,7 @@
   let floatingTooltip = null;
   let tooltipHideTimer = null;
   let uiInitialized = false; // 标记UI是否已初始化，防止重复创建
+  let toggleBtn = null;
 
   function injectStyles() {
     GM_addStyle(`
@@ -1628,6 +1625,9 @@
         z-index: 10001;
         box-shadow: 0 2px 12px rgba(22,119,255,0.4);
         transition: transform 0.2s;
+      }
+      .${SCRIPT_PREFIX}-toggle-btn:not(#${TOGGLE_BUTTON_ID}) {
+        display: none !important;
       }
       .${SCRIPT_PREFIX}-toggle-btn:hover {
         transform: scale(1.1);
@@ -2275,6 +2275,13 @@
   function updateStats() {
     const cards = getCardElements();
     const total = cards.length;
+    if (total === 0) {
+      if (statsBar) {
+        statsBar.remove();
+        statsBar = null;
+      }
+      return;
+    }
     let high = 0, medium = 0, low = 0;
     cards.forEach(card => {
       const level = card.dataset.bhLevel;
@@ -2303,6 +2310,7 @@
     if (observer) observer.disconnect();
 
     observer = new MutationObserver(() => {
+      ensureToggleButton();
       clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => processCards(), 300);
     });
@@ -3289,33 +3297,27 @@
   }
 
   function initUI() {
-    // 防止重复初始化（检查全局标志和DOM元素）
-    if (uiInitialized || window.__BOSS_HELPER_INITIALIZED__ || document.querySelector(`.${SCRIPT_PREFIX}-toggle-btn`)) {
+    // 防止重复初始化
+    if (uiInitialized) {
       console.log('[BOSS助手] UI已初始化，跳过重复创建');
       return;
     }
     uiInitialized = true;
-    window.__BOSS_HELPER_INITIALIZED__ = true;
 
     // 注入样式
     injectStyles();
 
-    // 创建配置按钮
-    const toggleBtn = document.createElement('button');
-    toggleBtn.className = `${SCRIPT_PREFIX}-toggle-btn`;
-    toggleBtn.textContent = '⚙';
-    toggleBtn.title = 'BOSS助手配置';
-    toggleBtn.addEventListener('click', togglePanel);
-    document.body.appendChild(toggleBtn);
+    ensureToggleButton();
 
-    // 注册油猴菜单
-    GM_registerMenuCommand('打开配置面板', togglePanel);
-    GM_registerMenuCommand('切换探测模式', () => {
-      config.probeMode = !config.probeMode;
-      saveConfig();
-      console.log(`[BOSS助手] 探测模式: ${config.probeMode ? '开启' : '关闭'}`);
-    });
-    GM_registerMenuCommand('重新评分', rescoreAllCards);
+    if (isTopWindow) {
+      GM_registerMenuCommand('打开配置面板', togglePanel);
+      GM_registerMenuCommand('切换探测模式', () => {
+        config.probeMode = !config.probeMode;
+        saveConfig();
+        console.log(`[BOSS助手] 探测模式: ${config.probeMode ? '开启' : '关闭'}`);
+      });
+      GM_registerMenuCommand('重新评分', rescoreAllCards);
+    }
 
     // 启动DOM监听
     setupObserver();
@@ -3336,6 +3338,39 @@
         }
       });
     }
+  }
+
+  function ensureToggleButton() {
+    if (!document.body) return;
+    if (!hasCandidateCards()) {
+      document.querySelectorAll(`.${SCRIPT_PREFIX}-toggle-btn`).forEach(btn => btn.remove());
+      toggleBtn = null;
+      return;
+    }
+
+    const buttons = Array.from(document.querySelectorAll(`.${SCRIPT_PREFIX}-toggle-btn`));
+    toggleBtn = document.getElementById(TOGGLE_BUTTON_ID);
+
+    if (buttons.length === 1 && toggleBtn === buttons[0]) {
+      return;
+    }
+
+    buttons.forEach(btn => btn.remove());
+    toggleBtn = null;
+
+    if (!toggleBtn) {
+      toggleBtn = document.createElement('button');
+      toggleBtn.id = TOGGLE_BUTTON_ID;
+      toggleBtn.className = `${SCRIPT_PREFIX}-toggle-btn`;
+      toggleBtn.textContent = '⚙';
+      toggleBtn.title = 'BOSS助手配置';
+      toggleBtn.addEventListener('click', togglePanel);
+      document.body.appendChild(toggleBtn);
+    }
+  }
+
+  function hasCandidateCards() {
+    return getCardElements().length > 0;
   }
 
   // 启动
