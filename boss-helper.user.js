@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS直聘候选人智能筛选助手
 // @namespace    https://github.com/freekingxx/boss
-// @version      0.1.1
+// @version      0.1.2
 // @description  自动解析推荐牛人卡片信息，根据预设规则评分并高亮显示，帮助快速识别高匹配候选人
 // @author       BossHelper
 // @match        https://www.zhipin.com/*
@@ -300,6 +300,16 @@
     if (['major_non_cs', 'major_stem_finance', 'major_exclude'].includes(nextRule.id)) {
       nextRule.field = 'major';
       nextRule.operator = 'containsAny';
+    }
+    if (['gt', 'lt', 'gte', 'lte', 'gtPerUnit'].includes(nextRule.operator)) {
+      const numericValue = typeof nextRule.value === 'number' ? nextRule.value : parseFloat(nextRule.value);
+      nextRule.value = Number.isFinite(numericValue) ? numericValue : 0;
+    }
+    if (nextRule.operator === 'between' && Array.isArray(nextRule.value)) {
+      nextRule.value = nextRule.value.map((item) => {
+        const numericValue = typeof item === 'number' ? item : parseFloat(item);
+        return Number.isFinite(numericValue) ? numericValue : 0;
+      });
     }
     return nextRule;
   }
@@ -624,7 +634,7 @@
     const primaryEdu = pickPrimaryEducation(card?.geekEdu, edus);
     const works = pickFirstArray(raw?.showWorks, card?.showWorks, card?.geekWorks, raw?.geekWorks);
     const primaryWork = pickPrimaryWork(raw?.geekLastWork, card?.geekLastWork, works);
-    const text = JSON.stringify(raw);
+    const text = buildCandidateSearchText(raw, card, works, edus, primaryWork, primaryEdu);
 
     // 尝试多种可能的字段名
     const name = card?.geekName || raw.name || raw.geekName || raw.nickName || raw.username || '';
@@ -635,6 +645,11 @@
     const major = primaryEdu?.major || card?.major || raw.major || raw.majorName || raw.specialty || raw.professional || raw.subjectName || extractMajorFromText(text);
     const experience = parseExperienceYears(card?.workYears || card?.geekWorkYear || raw.experience || raw.workYears, text);
     const company = primaryWork?.company || card?.company || raw.company || raw.companyName || raw.lastCompany || extractCompanyFromText(text) || '';
+    const position = primaryWork?.positionName || primaryWork?.positionCategory || card?.middleContent?.content || raw.middleContent?.content || '';
+    const expectPosition = card?.viewExpect?.positionNameLv2 || card?.viewExpect?.positionName ||
+      card?.expectPositionNameLv2 || card?.expectPositionName ||
+      raw?.viewExpect?.positionNameLv2 || raw?.viewExpect?.positionName ||
+      raw.expectPositionNameLv2 || raw.expectPositionName || '';
     const salary = card?.salary || raw.expectSalary || raw.salary || raw.salaryDesc || '';
     const skills = collectCandidateSkills(raw, card, works);
     const status = card?.applyStatusDesc || raw.applyStatusDesc || card?.status || raw.status || raw.jobStatus || raw.activeStatus || '';
@@ -649,7 +664,8 @@
     }
 
     // 解析薪资范围
-    let salaryMin = 0, salaryMax = 0;
+    let salaryMin = pickFirstNumber(card?.lowSalary, raw?.lowSalary, card?.salaryMin, raw?.salaryMin, card?.viewExpect?.lowSalary, raw?.viewExpect?.lowSalary) || 0;
+    let salaryMax = pickFirstNumber(card?.highSalary, raw?.highSalary, card?.salaryMax, raw?.salaryMax, card?.viewExpect?.highSalary, raw?.viewExpect?.highSalary) || 0;
     const salaryStr = typeof salary === 'string' ? salary : '';
     const salaryMatch = salaryStr.match(/(\d+)\s*[-~]\s*(\d+)\s*[Kk]/);
     if (salaryMatch) {
@@ -673,6 +689,8 @@
       major: major || null,
       experience: typeof experience === 'number' ? experience : null,
       company: company || null,
+      position: position || null,
+      expectPosition: expectPosition || null,
       salaryMin,
       salaryMax,
       salaryDesc: salaryStr,
@@ -710,6 +728,96 @@
     return Array.isArray(works) && works.length > 0 ? works[0] : null;
   }
 
+  function pickFirstNumber(...values) {
+    for (const value of values) {
+      if (typeof value === 'number' && Number.isFinite(value)) return value;
+      if (typeof value === 'string' && value.trim() !== '') {
+        const parsed = parseFloat(value);
+        if (Number.isFinite(parsed)) return parsed;
+      }
+    }
+    return null;
+  }
+
+  function buildCandidateSearchText(raw, card, works, edus, primaryWork, primaryEdu) {
+    const parts = [];
+    const seen = new Set();
+    const pushText = (value) => {
+      if (!value) return;
+      if (Array.isArray(value)) {
+        value.forEach(pushText);
+        return;
+      }
+      if (typeof value === 'object') {
+        if (typeof value.content === 'string') pushText(value.content);
+        else if (typeof value.name === 'string') pushText(value.name);
+        return;
+      }
+      const normalized = String(value).replace(/\s+/g, ' ').trim();
+      if (!normalized || seen.has(normalized)) return;
+      seen.add(normalized);
+      parts.push(normalized);
+    };
+
+    pushText(card?.geekName || raw?.geekName || raw?.name);
+    pushText(card?.ageDesc);
+    pushText(card?.geekWorkYear || raw?.workYears || raw?.experience);
+    pushText(card?.geekDegree || raw?.degreeName || raw?.education);
+    pushText(card?.applyStatusDesc || raw?.applyStatusDesc || raw?.status);
+    pushText(card?.salary || raw?.salary || raw?.expectSalary);
+    pushText(card?.geekDesc?.content);
+    pushText(card?.middleContent?.content || raw?.middleContent?.content);
+    pushText(card?.expectPositionName);
+    pushText(card?.expectPositionNameLv2);
+    pushText(card?.expectLocationName);
+    pushText(card?.viewExpect?.positionName);
+    pushText(card?.viewExpect?.positionNameLv2);
+    pushText(card?.viewExpect?.locationName);
+    pushText(raw?.viewExpect?.positionName);
+    pushText(raw?.viewExpect?.positionNameLv2);
+    pushText(raw?.viewExpect?.locationName);
+    pushText(raw?.activeTimeDesc);
+
+    if (primaryEdu) {
+      pushText(primaryEdu.school);
+      pushText(primaryEdu.major);
+      pushText(primaryEdu.degreeName);
+    }
+    if (Array.isArray(edus)) {
+      edus.forEach((edu) => {
+        pushText(edu?.school);
+        pushText(edu?.major);
+        pushText(edu?.degreeName);
+        pushText(`${edu?.startDate || ''}-${edu?.endDate || ''}`);
+      });
+    }
+
+    if (primaryWork) {
+      pushText(primaryWork.company);
+      pushText(primaryWork.positionName);
+      pushText(primaryWork.positionCategory);
+      pushText(primaryWork.workDesc);
+    }
+    if (Array.isArray(works)) {
+      works.forEach((work) => {
+        pushText(work?.company);
+        pushText(work?.positionName);
+        pushText(work?.positionCategory);
+        pushText(work?.workDesc);
+        pushText(work?.responsibility);
+        pushText(work?.workEmphasisList);
+        pushText(`${work?.startDate || ''}-${work?.endDate || '至今'}`);
+      });
+    }
+
+    [
+      raw?.skills, raw?.skillList, raw?.tags, raw?.matches, raw?.markWords, raw?.hlmatches,
+      card?.skills, card?.skillList, card?.tags, card?.matches, card?.markWords, card?.hlmatches
+    ].forEach(pushText);
+
+    return parts.join(' ');
+  }
+
   function collectCandidateSkills(raw, card, works) {
     const skills = [];
     const pushSkill = (value) => {
@@ -719,7 +827,8 @@
       if (normalized && !skills.includes(normalized)) skills.push(normalized);
     };
 
-    [raw?.skills, raw?.skillList, raw?.tags, card?.skills, card?.skillList, card?.tags, card?.matches, card?.markWords].forEach((list) => {
+    [raw?.skills, raw?.skillList, raw?.tags, raw?.matches, raw?.markWords, raw?.hlmatches,
+      card?.skills, card?.skillList, card?.tags, card?.matches, card?.markWords, card?.hlmatches].forEach((list) => {
       if (Array.isArray(list)) list.forEach(pushSkill);
     });
 
@@ -883,18 +992,28 @@
     periods.sort((a, b) => a.start - b.start);
     let gapCount = 0, maxGapMonths = 0;
     const now = Date.now();
+    const graduationPassed = !graduationDate || graduationDate.getTime() < now;
 
-    function getEffectiveGapStart(date) {
-      if (!date) return graduationDate || null;
-      if (!graduationDate) return date;
-      return date < graduationDate ? graduationDate : date;
+    // 检测毕业到第一份正式工作之间的空窗
+    // 预留 3 个月毕业缓冲期，避免把常见校招入职窗口误判成 gap
+    if (graduationPassed && graduationDate && periods.length > 0) {
+      const firstPostGradPeriod = periods.find(period => period.start && period.start > graduationDate);
+      if (firstPostGradPeriod) {
+        const months = (firstPostGradPeriod.start - graduationDate) / (1000 * 60 * 60 * 24 * 30);
+        if (months > 3) {
+          gapCount++;
+          maxGapMonths = Math.max(maxGapMonths, months);
+        }
+      }
     }
 
     // 检测工作之间的空窗
     for (let i = 1; i < periods.length; i++) {
-      const prevEnd = getEffectiveGapStart(periods[i - 1].end);
+      const rawPrevEnd = periods[i - 1].end;
       const currStart = periods[i].start;
+      if (!rawPrevEnd || !currStart) continue;
       if (graduationDate && currStart <= graduationDate) continue;
+      const prevEnd = graduationDate && rawPrevEnd < graduationDate ? graduationDate : rawPrevEnd;
       if (prevEnd && currStart && currStart > prevEnd) {
         const months = (currStart - prevEnd) / (1000 * 60 * 60 * 24 * 30);
         if (months > 1) {
@@ -905,9 +1024,9 @@
     }
 
     // 检测最后一份工作结束至今的空窗（当前失业期）
-    const graduationPassed = !graduationDate || graduationDate.getTime() < now;
     if (graduationPassed && periods.length > 0) {
-      const lastEnd = getEffectiveGapStart(periods[periods.length - 1].end);
+      const rawLastEnd = periods[periods.length - 1].end;
+      const lastEnd = rawLastEnd && graduationDate && rawLastEnd < graduationDate ? graduationDate : rawLastEnd;
       if (lastEnd) {
         const monthsToNow = (now - lastEnd.getTime()) / (1000 * 60 * 60 * 24 * 30);
         if (monthsToNow > 3) {
@@ -2213,11 +2332,20 @@
     lines.push('───────');
     if (config.debugMode) {
       const workGapRule = config.rules.find(r => r.id === 'work_gap');
+      const ageRule = config.rules.find(r => r.id === 'age_penalty' || (r.field === 'age' && r.operator === 'gtPerUnit'));
       const periods = Array.isArray(candidate.jobPeriods) ? candidate.jobPeriods : [];
+      const ageValue = typeof candidate.age === 'number' ? candidate.age : null;
+      const ageThreshold = ageRule && typeof ageRule.value === 'number' ? ageRule.value : null;
+      const ageOverflowUnits = ageRule && ageValue !== null && ageThreshold !== null && ageValue > ageThreshold
+        ? Math.floor(ageValue - ageThreshold)
+        : 0;
+      const ageExpectedScore = ageRule && ageOverflowUnits > 0 ? ageRule.score * ageOverflowUnits : 0;
       lines.push(`[调试] 数据来源: ${candidate.source || 'unknown'} / 时间来源: ${candidate.jobPeriodsSource || 'none'}`);
+      lines.push(`[调试] 年龄: ${ageValue ?? '无'} | 年龄规则: ${ageRule ? (ageRule.enabled ? '启用' : '关闭') : '缺失'} | 阈值: ${ageThreshold ?? '无'} | 超出: ${ageOverflowUnits} | 预期扣分: ${ageExpectedScore}`);
       lines.push(`[调试] 状态: ${candidate.status || '未知'} | 工作段: ${candidate.jobCount || 0} | gap数: ${candidate.gapCount || 0} | 最大空窗: ${candidate.maxGapMonths || 0}月`);
       lines.push(`[调试] 毕业时间基线: ${candidate.graduationDate ? formatPeriod({ start: new Date(candidate.graduationDate), end: null }).replace('-至今', '') : '无'}`);
       lines.push(`[调试] 学校: ${candidate.school || '无'} | 专业: ${candidate.major || '无'}`);
+      lines.push(`[调试] 当前岗位: ${candidate.position || '无'} | 期望岗位: ${candidate.expectPosition || '无'} | 薪资: ${candidate.salaryMin || 0}-${candidate.salaryMax || 0}K`);
       lines.push(`[调试] work_gap规则: ${workGapRule ? (workGapRule.enabled ? '启用' : '关闭') : '缺失'}`);
       if (periods.length > 0) {
         const periodText = periods.map(period => formatPeriod({
@@ -2794,7 +2922,7 @@
       } else if (newRule.operator === 'between') {
         const parts = rawValue.split(/[,，\-~]\s*/).filter(Boolean).map(Number);
         newRule.value = parts.length === 2 ? parts : [0, 100];
-      } else if (['gt', 'lt', 'gte', 'lte'].includes(newRule.operator)) {
+      } else if (['gt', 'lt', 'gte', 'lte', 'gtPerUnit'].includes(newRule.operator)) {
         newRule.value = parseFloat(rawValue) || 0;
       } else {
         newRule.value = rawValue;
