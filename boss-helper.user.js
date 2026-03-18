@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS直聘候选人智能筛选助手
-// @namespace    https://github.com/boss-helper
-// @version      0.1.0
+// @namespace    https://github.com/freekingxx/boss
+// @version      0.1.1
 // @description  自动解析推荐牛人卡片信息，根据预设规则评分并高亮显示，帮助快速识别高匹配候选人
 // @author       BossHelper
 // @match        https://www.zhipin.com/*
@@ -13,6 +13,9 @@
 // @grant        GM_notification
 // @grant        GM_xmlhttpRequest
 // @connect      raw.githubusercontent.com
+// @updateURL    https://raw.githubusercontent.com/freekingxx/boss/main/boss-helper.user.js
+// @downloadURL  https://raw.githubusercontent.com/freekingxx/boss/main/boss-helper.user.js
+// @supportURL   https://github.com/freekingxx/boss/issues
 // @run-at       document-start
 // ==/UserScript==
 
