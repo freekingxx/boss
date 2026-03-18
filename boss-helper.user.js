@@ -679,6 +679,7 @@
       jobCount: jobMetrics.jobCount,
       gapCount: jobMetrics.gapCount,
       maxGapMonths: jobMetrics.maxGapMonths,
+      graduationDate: jobMetrics.graduationDate,
       jobPeriods: jobMetrics.periods,
       jobPeriodsSource: jobMetrics.periodsSource,
       rawText: text,
@@ -758,6 +759,25 @@
     return [];
   }
 
+  function findEducationList(raw) {
+    if (!raw || typeof raw !== 'object') return [];
+    const fields = ['showEdus', 'geekEdus', 'eduList', 'educationList', 'educations', 'geekEduList'];
+    for (const key of fields) {
+      if (Array.isArray(raw[key]) && raw[key].length > 0) return raw[key];
+    }
+    if (raw.geekEdu && typeof raw.geekEdu === 'object') return [raw.geekEdu];
+    for (const key of Object.keys(raw)) {
+      const val = raw[key];
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        for (const subKey of fields) {
+          if (Array.isArray(val[subKey]) && val[subKey].length > 0) return val[subKey];
+        }
+        if (val.geekEdu && typeof val.geekEdu === 'object') return [val.geekEdu];
+      }
+    }
+    return [];
+  }
+
   function parseWorkDate(val) {
     if (!val) return null;
     if (typeof val === 'number') return new Date(val > 1e12 ? val : val * 1000);
@@ -809,11 +829,22 @@
     return `${formatDate(period.start)}-${formatDate(period.end)}`;
   }
 
+  function getGraduationDate(raw) {
+    const edus = findEducationList(raw);
+    let latest = null;
+    edus.forEach((edu) => {
+      const end = parseWorkDate(edu?.endDate || edu?.graduateDate || edu?.endTime || edu?.finishTime);
+      if (end && (!latest || end > latest)) latest = end;
+    });
+    return latest;
+  }
+
   // 计算跳槽频率和空窗期指标
   function computeJobMetrics(raw, totalExp) {
     const workList = findWorkExpList(raw);
     let jobCount = workList.length;
     let periodsSource = workList.length > 0 ? 'api' : 'none';
+    const graduationDate = getGraduationDate(raw);
 
     // 从结构化数据提取工作时间段
     let periods = [];
@@ -848,11 +879,19 @@
 
     periods.sort((a, b) => a.start - b.start);
     let gapCount = 0, maxGapMonths = 0;
+    const now = Date.now();
+
+    function getEffectiveGapStart(date) {
+      if (!date) return graduationDate || null;
+      if (!graduationDate) return date;
+      return date < graduationDate ? graduationDate : date;
+    }
 
     // 检测工作之间的空窗
     for (let i = 1; i < periods.length; i++) {
-      const prevEnd = periods[i - 1].end;
+      const prevEnd = getEffectiveGapStart(periods[i - 1].end);
       const currStart = periods[i].start;
+      if (graduationDate && currStart <= graduationDate) continue;
       if (prevEnd && currStart && currStart > prevEnd) {
         const months = (currStart - prevEnd) / (1000 * 60 * 60 * 24 * 30);
         if (months > 1) {
@@ -863,14 +902,21 @@
     }
 
     // 检测最后一份工作结束至今的空窗（当前失业期）
-    if (periods.length > 0) {
-      const lastEnd = periods[periods.length - 1].end;
+    const graduationPassed = !graduationDate || graduationDate.getTime() < now;
+    if (graduationPassed && periods.length > 0) {
+      const lastEnd = getEffectiveGapStart(periods[periods.length - 1].end);
       if (lastEnd) {
-        const monthsToNow = (Date.now() - lastEnd.getTime()) / (1000 * 60 * 60 * 24 * 30);
+        const monthsToNow = (now - lastEnd.getTime()) / (1000 * 60 * 60 * 24 * 30);
         if (monthsToNow > 3) {
           gapCount++;
           maxGapMonths = Math.max(maxGapMonths, monthsToNow);
         }
+      }
+    } else if (graduationPassed && graduationDate && periods.length === 0) {
+      const monthsToNow = (now - graduationDate.getTime()) / (1000 * 60 * 60 * 24 * 30);
+      if (monthsToNow > 3) {
+        gapCount++;
+        maxGapMonths = Math.max(maxGapMonths, monthsToNow);
       }
     }
 
@@ -878,6 +924,7 @@
       jobCount: Math.max(jobCount, periods.length),
       gapCount,
       maxGapMonths: Math.round(maxGapMonths),
+      graduationDate: graduationDate ? graduationDate.toISOString() : null,
       periods: periods.map(period => ({
         start: period.start ? period.start.toISOString() : null,
         end: period.end ? period.end.toISOString() : null
@@ -1365,6 +1412,7 @@
           jobCount: metrics.jobCount,
           gapCount: metrics.gapCount,
           maxGapMonths: metrics.maxGapMonths,
+          graduationDate: metrics.graduationDate,
           jobPeriods: metrics.periods,
           jobPeriodsSource: metrics.periodsSource
         };
@@ -1416,6 +1464,8 @@
   let observer = null;
   let debounceTimer = null;
   let detectedCardSelector = null;
+  let floatingTooltip = null;
+  let tooltipHideTimer = null;
 
   function injectStyles() {
     GM_addStyle(`
@@ -1491,24 +1541,31 @@
 
       /* 悬停提示 */
       .${SCRIPT_PREFIX}-tooltip {
-        display: none;
-        position: absolute;
-        top: 32px;
-        right: 8px;
+        position: fixed;
+        top: 0;
+        left: 0;
         background: rgba(0,0,0,0.88);
         color: #fff;
-        padding: 8px 12px;
-        border-radius: 6px;
+        padding: 10px 12px;
+        border-radius: 8px;
         font-size: 12px;
         line-height: 1.6;
-        z-index: 1000;
-        max-width: 260px;
+        z-index: 100002;
+        max-width: min(420px, calc(100vw - 24px));
+        max-height: min(70vh, 520px);
+        overflow: auto;
         white-space: pre-line;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+        pointer-events: auto;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(4px);
+        transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
       }
-      .${SCRIPT_PREFIX}-badge:hover ~ .${SCRIPT_PREFIX}-tooltip,
-      .${SCRIPT_PREFIX}-tooltip:hover {
-        display: block;
+      .${SCRIPT_PREFIX}-tooltip.show {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
       }
 
       /* 统计栏 */
@@ -1976,6 +2033,66 @@
     return detectCardElements();
   }
 
+  function ensureFloatingTooltip() {
+    if (floatingTooltip) return floatingTooltip;
+    floatingTooltip = document.createElement('div');
+    floatingTooltip.className = `${SCRIPT_PREFIX}-tooltip`;
+    floatingTooltip.addEventListener('mouseenter', () => {
+      if (tooltipHideTimer) clearTimeout(tooltipHideTimer);
+    });
+    floatingTooltip.addEventListener('mouseleave', hideFloatingTooltip);
+    document.body.appendChild(floatingTooltip);
+    return floatingTooltip;
+  }
+
+  function positionFloatingTooltip(anchorEl) {
+    if (!floatingTooltip || !anchorEl) return;
+    const rect = anchorEl.getBoundingClientRect();
+    const tooltipRect = floatingTooltip.getBoundingClientRect();
+    const gap = 10;
+
+    let left = rect.right - tooltipRect.width;
+    let top = rect.bottom + gap;
+
+    if (left < 12) left = 12;
+    if (left + tooltipRect.width > window.innerWidth - 12) {
+      left = window.innerWidth - tooltipRect.width - 12;
+    }
+    if (top + tooltipRect.height > window.innerHeight - 12) {
+      top = rect.top - tooltipRect.height - gap;
+    }
+    if (top < 12) top = 12;
+
+    floatingTooltip.style.left = `${left}px`;
+    floatingTooltip.style.top = `${top}px`;
+  }
+
+  function showFloatingTooltip(content, anchorEl) {
+    const tooltip = ensureFloatingTooltip();
+    if (tooltipHideTimer) clearTimeout(tooltipHideTimer);
+    tooltip.textContent = content;
+    tooltip.classList.add('show');
+    positionFloatingTooltip(anchorEl);
+  }
+
+  function hideFloatingTooltip() {
+    if (!floatingTooltip) return;
+    if (tooltipHideTimer) clearTimeout(tooltipHideTimer);
+    tooltipHideTimer = setTimeout(() => {
+      if (floatingTooltip) floatingTooltip.classList.remove('show');
+    }, 80);
+  }
+
+  function bindTooltipHover(targetEl, content) {
+    if (!targetEl) return;
+    targetEl.addEventListener('mouseenter', () => showFloatingTooltip(content, targetEl));
+    targetEl.addEventListener('mouseleave', hideFloatingTooltip);
+    targetEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showFloatingTooltip(content, targetEl);
+    });
+  }
+
   function mergeCandidateJobMetrics(candidate, domCandidate) {
     const merged = { ...candidate };
     const candidatePeriods = Array.isArray(candidate.jobPeriods) ? candidate.jobPeriods : [];
@@ -1991,6 +2108,7 @@
       merged.jobCount = domCandidate.jobCount;
       merged.gapCount = domCandidate.gapCount;
       merged.maxGapMonths = domCandidate.maxGapMonths;
+      merged.graduationDate = domCandidate.graduationDate;
       merged.jobPeriods = domCandidate.jobPeriods;
       merged.jobPeriodsSource = domCandidate.jobPeriodsSource || 'dom-text';
     }
@@ -2078,9 +2196,6 @@
       card.appendChild(keywordBadge);
     }
 
-    // 悬停提示
-    const tooltip = document.createElement('div');
-    tooltip.className = `${SCRIPT_PREFIX}-tooltip`;
     const lines = ['基准分: 30'];
     if (result.matchedRules.length > 0) {
       result.matchedRules.forEach(r => {
@@ -2098,6 +2213,7 @@
       const periods = Array.isArray(candidate.jobPeriods) ? candidate.jobPeriods : [];
       lines.push(`[调试] 数据来源: ${candidate.source || 'unknown'} / 时间来源: ${candidate.jobPeriodsSource || 'none'}`);
       lines.push(`[调试] 状态: ${candidate.status || '未知'} | 工作段: ${candidate.jobCount || 0} | gap数: ${candidate.gapCount || 0} | 最大空窗: ${candidate.maxGapMonths || 0}月`);
+      lines.push(`[调试] 毕业时间基线: ${candidate.graduationDate ? formatPeriod({ start: new Date(candidate.graduationDate), end: null }).replace('-至今', '') : '无'}`);
       lines.push(`[调试] 学校: ${candidate.school || '无'} | 专业: ${candidate.major || '无'}`);
       lines.push(`[调试] work_gap规则: ${workGapRule ? (workGapRule.enabled ? '启用' : '关闭') : '缺失'}`);
       if (periods.length > 0) {
@@ -2113,8 +2229,7 @@
       lines.push('───────');
     }
     lines.push(`总分: ${result.score}`);
-    tooltip.textContent = lines.join('\n');
-    card.appendChild(tooltip);
+    bindTooltipHover(badge, lines.join('\n'));
 
     // 高分候选人通知
     notifyHighScoreCandidate(candidate, result, card);
