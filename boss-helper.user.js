@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS直聘候选人智能筛选助手
 // @namespace    https://github.com/freekingxx/boss
-// @version      0.1.1
+// @version      0.1.2
 // @description  自动解析推荐牛人卡片信息，根据预设规则评分并高亮显示，帮助快速识别高匹配候选人
 // @author       BossHelper
 // @match        https://www.zhipin.com/*
@@ -21,6 +21,19 @@
 
 (function () {
   'use strict';
+
+  // 只在主窗口运行，忽略 iframe
+  if (window.self !== window.top) {
+    console.log('[BOSS助手] 检测到 iframe，跳过执行');
+    return;
+  }
+
+  // 检查是否已经有实例在运行
+  if (window.__BOSS_HELPER_RUNNING__) {
+    console.log('[BOSS助手] 检测到重复实例，跳过执行');
+    return;
+  }
+  window.__BOSS_HELPER_RUNNING__ = true;
 
   // ============================================================
   // Section 1: 常量与数据
@@ -1469,6 +1482,7 @@
   let detectedCardSelector = null;
   let floatingTooltip = null;
   let tooltipHideTimer = null;
+  let uiInitialized = false; // 标记UI是否已初始化，防止重复创建
 
   function injectStyles() {
     GM_addStyle(`
@@ -3275,6 +3289,14 @@
   }
 
   function initUI() {
+    // 防止重复初始化（检查全局标志和DOM元素）
+    if (uiInitialized || window.__BOSS_HELPER_INITIALIZED__ || document.querySelector(`.${SCRIPT_PREFIX}-toggle-btn`)) {
+      console.log('[BOSS助手] UI已初始化，跳过重复创建');
+      return;
+    }
+    uiInitialized = true;
+    window.__BOSS_HELPER_INITIALIZED__ = true;
+
     // 注入样式
     injectStyles();
 
@@ -3301,7 +3323,7 @@
     // 首次处理
     setTimeout(() => processCards(), 1000);
 
-    console.log('%c[BOSS助手] 已启动 v0.1.0', 'color: #1677ff; font-weight: bold; font-size: 14px');
+    console.log('%c[BOSS助手] 已启动 v0.1.1', 'color: #1677ff; font-weight: bold; font-size: 14px');
     if (config.probeMode) {
       console.log('%c[BOSS助手] 探测模式已开启，请浏览页面并在控制台查看拦截到的API请求', 'color: orange; font-size: 13px');
     }
