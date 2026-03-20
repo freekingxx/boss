@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS直聘候选人智能筛选助手
 // @namespace    https://github.com/freekingxx/boss
-// @version      0.1.2
+// @version      0.1.4
 // @description  自动解析推荐牛人卡片信息，根据预设规则评分并高亮显示，帮助快速识别高匹配候选人
 // @author       BossHelper
 // @match        https://www.zhipin.com/*
@@ -41,6 +41,9 @@
   const REMOTE_CACHE_KEY = 'boss_helper_remote_config_v1';
   const REJECTED_KEY = 'boss_helper_rejected_v1';
   const ROLE_URL_KEY = 'boss_helper_role_url';
+  const TOAST_DURATION = 4500;
+  const AUTO_SCROLL_INTERVAL = 1400;
+  const AUTO_SCROLL_STUCK_LIMIT = 4;
   const GITHUB_BASE = 'https://raw.githubusercontent.com/freekingxx/boss/main/configs';
   const ROLE_CONFIGS = {
     dev:     { name: '开发岗', url: `${GITHUB_BASE}/role-dev.json` },
@@ -212,7 +215,8 @@
       keywordBonusScore: 12,
       keywordPenaltyMinMatch: 1,
       keywordPenaltyScore: -12,
-      highlightKeywords: []
+      highlightKeywords: [],
+      liveMatchMode: 'score'
     };
   }
 
@@ -236,6 +240,26 @@
     if (rejectedMap[name]) delete rejectedMap[name];
     else rejectedMap[name] = Date.now();
     saveRejected();
+  }
+
+  function buildCandidateKey(candidate) {
+    return [
+      candidate.name || '',
+      candidate.school || '',
+      candidate.company || '',
+      candidate.experience ?? '',
+      candidate.salaryDesc || ''
+    ].join('||');
+  }
+
+  function exportJsonFile(data, fileName) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   function loadConfig() {
@@ -368,13 +392,7 @@
   }
 
   function exportConfig() {
-    const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `boss-helper-config-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    exportJsonFile(config, `boss-helper-config-${new Date().toISOString().slice(0, 10)}.json`);
   }
 
   function importConfig(jsonStr) {
@@ -589,51 +607,73 @@
     }
   }
 
-  // 在嵌套JSON中查找候选人数组
-  function findCandidateArray(data, depth = 0) {
-    if (depth > 5) return null;
-    if (!data || typeof data !== 'object') return null;
+  function getCandidateIdentity(obj) {
+    if (!obj || typeof obj !== 'object') return '';
+    const card = obj?.geekCard && typeof obj.geekCard === 'object' ? obj.geekCard : null;
+    const name = card?.geekName || obj.geekName || obj.name || obj.nickName || obj.username || '';
+    if (typeof name === 'string' && name.trim()) return name.trim();
+    return '';
+  }
 
-    // 如果是数组，检查元素是否像候选人
-    if (Array.isArray(data)) {
-      if (data.length >= 2 && data.length <= 100) {
-        const sample = data[0];
-        if (looksLikeCandidate(sample)) return data;
-      }
-      return null;
-    }
+  function scoreCandidateShape(obj) {
+    if (!obj || typeof obj !== 'object') return false;
+    const card = obj?.geekCard && typeof obj.geekCard === 'object' ? obj.geekCard : obj;
+    const identity = getCandidateIdentity(obj);
+    const rawText = JSON.stringify(obj).toLowerCase();
+    const keys = Object.keys(obj).join('|').toLowerCase();
 
-    // 遍历对象属性
-    for (const key of Object.keys(data)) {
-      const val = data[key];
-      if (Array.isArray(val) && val.length >= 2) {
-        const sample = val[0];
-        if (looksLikeCandidate(sample)) return val;
-      }
-      // 递归搜索
-      const found = findCandidateArray(val, depth + 1);
-      if (found) return found;
-    }
-    return null;
+    let score = 0;
+    if (identity) score += /[\u4e00-\u9fa5a-z]{2,20}/i.test(identity) ? 4 : 2;
+    if (obj?.geekCard && typeof obj.geekCard === 'object') score += 3;
+    if (Array.isArray(obj?.showWorks) || Array.isArray(card?.showWorks) || Array.isArray(card?.geekWorks) || Array.isArray(obj?.geekWorks)) score += 2;
+    if (Array.isArray(obj?.showEdus) || Array.isArray(card?.showEdus) || Array.isArray(card?.geekEdus) || Array.isArray(obj?.geekEdus)) score += 2;
+    if (card?.salary || obj?.salary || obj?.expectSalary || obj?.salaryDesc) score += 1;
+    if (card?.workYears || card?.geekWorkYear || obj?.experience || obj?.workYears) score += 1;
+    if (card?.age || obj?.age || obj?.gender || card?.gender || obj?.genderName) score += 1;
+    if (card?.school || obj?.school || obj?.schoolName) score += 1;
+    if (card?.company || obj?.company || obj?.companyName || obj?.lastCompany) score += 1;
+    if (/geek|resume|candidate/.test(keys)) score += 1;
+    if (/(本科|硕士|博士|大专|经验|在职|离职|薪资|期望)/.test(rawText)) score += 1;
+
+    if (/filter|filters|option|options|selected|bucket|count|label/.test(keys) && !identity) score -= 4;
+    if (Array.isArray(obj?.options) || Array.isArray(obj?.children)) score -= 2;
+
+    return score;
   }
 
   // 判断一个对象是否像候选人数据
   function looksLikeCandidate(obj) {
-    if (!obj || typeof obj !== 'object') return false;
-    const text = JSON.stringify(obj).toLowerCase();
-    const signals = [
-      // 字段名特征
-      'name', 'geek', 'expect', 'salary', 'degree', 'education',
-      'experience', 'school', 'age', 'gender', 'skill',
-      // 中文内容特征
-      '本科', '硕士', '博士', '大专', '经验', '在职', '离职',
-      '期望', '薪资', '技能'
-    ];
-    let matchCount = 0;
-    for (const s of signals) {
-      if (text.includes(s)) matchCount++;
+    return scoreCandidateShape(obj) >= 5;
+  }
+
+  function collectCandidateArrays(data, depth = 0, results = []) {
+    if (depth > 6 || !data || typeof data !== 'object') return results;
+
+    if (Array.isArray(data)) {
+      const directMatches = data.filter(item => looksLikeCandidate(item));
+      if (directMatches.length > 0) {
+        results.push(directMatches);
+      }
+      data.forEach(item => collectCandidateArrays(item, depth + 1, results));
+      return results;
     }
-    return matchCount >= 3;
+
+    Object.keys(data).forEach((key) => {
+      collectCandidateArrays(data[key], depth + 1, results);
+    });
+    return results;
+  }
+
+  // 在嵌套JSON中查找最像候选人的数组
+  function findCandidateArray(data) {
+    const arrays = collectCandidateArrays(data);
+    if (arrays.length === 0) return null;
+    arrays.sort((a, b) => {
+      const scoreA = a.length * 10 + a.reduce((sum, item) => sum + scoreCandidateShape(item), 0);
+      const scoreB = b.length * 10 + b.reduce((sum, item) => sum + scoreCandidateShape(item), 0);
+      return scoreB - scoreA;
+    });
+    return arrays[0];
   }
 
   // 从API数据解析候选人（需要根据实际接口调整字段映射）
@@ -1319,6 +1359,76 @@
     }
   }
 
+  function getLiveMatchMode() {
+    return config.liveMatchMode === 'highlight' ? 'highlight' : 'score';
+  }
+
+  function shouldShowInLiveMatch(result) {
+    if (!result) return false;
+    if (getLiveMatchMode() === 'highlight') {
+      return Array.isArray(result.highlightedKeywords) && result.highlightedKeywords.length > 0;
+    }
+    return result.score >= config.notifyThreshold;
+  }
+
+  function updateLiveMatchEntry(candidate, result, cardElement) {
+    if (!candidate || !result || !cardElement) return;
+    const key = buildCandidateKey(candidate);
+    liveMatchStore.set(key, {
+      key,
+      name: candidate.name || '未知候选人',
+      score: result.score,
+      level: result.level,
+      school: candidate.school || '',
+      education: candidate.education || '',
+      experience: candidate.experience ?? null,
+      company: candidate.company || '',
+      salaryDesc: candidate.salaryDesc || '',
+      status: candidate.status || '',
+      highlightedKeywords: Array.isArray(result.highlightedKeywords) ? [...result.highlightedKeywords] : [],
+      matchedRules: Array.isArray(result.matchedRules) ? result.matchedRules.map(rule => rule.name) : [],
+      updatedAt: Date.now(),
+      cardElement
+    });
+  }
+
+  function getLiveMatchItems() {
+    return [...liveMatchStore.values()]
+      .filter(item => shouldShowInLiveMatch({
+        score: item.score,
+        highlightedKeywords: item.highlightedKeywords
+      }))
+      .sort((a, b) => {
+        if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
+        return (b.updatedAt || 0) - (a.updatedAt || 0);
+      });
+  }
+
+  function findCardForLiveMatch(item) {
+    if (item?.cardElement?.isConnected) return item.cardElement;
+    const cards = getCardElements();
+    for (const card of cards) {
+      if (card.dataset.bhCandidateKey === item.key) return card;
+    }
+    for (const card of cards) {
+      if (item.name && (card.textContent || '').includes(item.name)) return card;
+    }
+    return null;
+  }
+
+  function locateLiveMatch(key) {
+    const item = liveMatchStore.get(key);
+    if (!item) return;
+    const cardElement = findCardForLiveMatch(item);
+    if (!cardElement) {
+      alert('当前页面里找不到该候选人卡片，可能尚未加载或已被页面卸载。');
+      return;
+    }
+    cardElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    cardElement.style.outline = '3px solid #1677ff';
+    setTimeout(() => { cardElement.style.outline = ''; }, 2200);
+  }
+
   function showToast(candidate, result, cardElement) {
     const container = getToastContainer();
 
@@ -1327,20 +1437,32 @@
 
     const info = document.createElement('div');
     info.className = `${SCRIPT_PREFIX}-toast-info`;
+
+    const header = document.createElement('div');
+    header.className = `${SCRIPT_PREFIX}-toast-header`;
+
     const title = document.createElement('strong');
-    title.textContent = `${candidate.name || '候选人'} — ${result.score}分`;
-    info.appendChild(title);
+    title.textContent = candidate.name || '候选人';
+    header.appendChild(title);
+
+    const scoreTag = document.createElement('span');
+    scoreTag.className = `${SCRIPT_PREFIX}-toast-score`;
+    scoreTag.textContent = `${result.score}分`;
+    header.appendChild(scoreTag);
+
+    info.appendChild(header);
 
     const details = [];
+    if (candidate.experience) details.push(candidate.experience + '年经验');
     if (candidate.education) details.push(candidate.education);
     if (candidate.school) details.push(candidate.school);
-    if (candidate.experience) details.push(candidate.experience + '年经验');
     if (candidate.salaryDesc) details.push(candidate.salaryDesc);
     if (details.length > 0) {
-      const sub = document.createElement('span');
+      const sub = document.createElement('div');
       sub.className = `${SCRIPT_PREFIX}-toast-sub`;
-      sub.textContent = details.join(' · ');
+      sub.textContent = details.join('\n');
       info.appendChild(sub);
+      toast.title = `${candidate.name || '候选人'} · ${result.score}分 · ${details.join(' · ')}`;
     }
 
     const actions = document.createElement('div');
@@ -1349,7 +1471,7 @@
     const locateBtn = document.createElement('button');
     locateBtn.className = `${SCRIPT_PREFIX}-btn`;
     locateBtn.textContent = '定位';
-    locateBtn.style.cssText = 'padding:3px 10px; font-size:12px;';
+    locateBtn.style.cssText = 'padding:1px 6px; font-size:11px; line-height:18px; min-width:34px;';
     locateBtn.addEventListener('click', () => {
       if (cardElement) {
         cardElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1361,8 +1483,10 @@
 
     const dismissBtn = document.createElement('button');
     dismissBtn.className = `${SCRIPT_PREFIX}-btn ${SCRIPT_PREFIX}-btn-outline`;
-    dismissBtn.textContent = '忽略';
-    dismissBtn.style.cssText = 'padding:3px 10px; font-size:12px;';
+    dismissBtn.textContent = '×';
+    dismissBtn.title = '关闭';
+    dismissBtn.setAttribute('aria-label', '关闭通知');
+    dismissBtn.style.cssText = 'padding:1px 0; width:20px; min-width:20px; font-size:12px; line-height:18px;';
     dismissBtn.addEventListener('click', () => toast.remove());
 
     actions.appendChild(locateBtn);
@@ -1375,11 +1499,11 @@
     // 入场动画
     requestAnimationFrame(() => toast.classList.add('show'));
 
-    // 8秒后自动消失
+    // 更快自动消失，降低对主界面的遮挡
     setTimeout(() => {
       toast.classList.remove('show');
       setTimeout(() => toast.remove(), 300);
-    }, 8000);
+    }, TOAST_DURATION);
   }
 
   function getToastContainer() {
@@ -1599,6 +1723,24 @@
   let tooltipHideTimer = null;
   let uiInitialized = false; // 标记UI是否已初始化，防止重复创建
   let toggleBtn = null;
+  let autoScrollBtn = null;
+  let liveMatchPanel = null;
+  let liveMatchListEl = null;
+  let liveMatchSummaryEl = null;
+  let liveMatchModeSelect = null;
+  let liveMatchCollapsed = false;
+  let interactionHooksBound = false;
+  const liveMatchStore = new Map();
+  const autoScrollState = {
+    active: false,
+    timer: null,
+    lastScrollTop: -1,
+    lastScrollHeight: -1,
+    stagnantSteps: 0,
+    emptySteps: 0,
+    statusText: '未启动',
+    startedAt: 0
+  };
 
   function injectStyles() {
     GM_addStyle(`
@@ -1704,8 +1846,8 @@
       /* 统计栏 */
       .${SCRIPT_PREFIX}-stats {
         position: fixed;
-        bottom: 70px;
-        right: 20px;
+        bottom: 20px;
+        right: 76px;
         background: rgba(0,0,0,0.85);
         color: #fff;
         padding: 8px 16px;
@@ -1750,6 +1892,32 @@
       }
       .${SCRIPT_PREFIX}-toggle-btn:hover {
         transform: scale(1.1);
+      }
+      .${SCRIPT_PREFIX}-auto-scroll-btn {
+        position: fixed;
+        bottom: 76px;
+        right: 20px;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: #13c2c2;
+        color: #fff;
+        border: none;
+        cursor: pointer;
+        font-size: 18px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10001;
+        box-shadow: 0 2px 12px rgba(19,194,194,0.38);
+        transition: transform 0.2s, background 0.2s;
+      }
+      .${SCRIPT_PREFIX}-auto-scroll-btn:hover {
+        transform: scale(1.1);
+      }
+      .${SCRIPT_PREFIX}-auto-scroll-btn.active {
+        background: #fa541c;
+        box-shadow: 0 2px 12px rgba(250,84,28,0.38);
       }
 
       /* 配置面板 */
@@ -1870,6 +2038,146 @@
       .${SCRIPT_PREFIX}-rule-btn.delete:hover {
         border-color: #f44336;
         color: #f44336;
+      }
+      .${SCRIPT_PREFIX}-live-match {
+        position: fixed;
+        right: 76px;
+        bottom: 74px;
+        width: 280px;
+        max-height: min(62vh, 420px);
+        background: rgba(255,255,255,0.96);
+        border: 1px solid #e8e8e8;
+        border-radius: 12px;
+        box-shadow: 0 8px 28px rgba(0,0,0,0.14);
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        backdrop-filter: blur(10px);
+      }
+      .${SCRIPT_PREFIX}-live-match.collapsed {
+        max-height: 48px;
+      }
+      .${SCRIPT_PREFIX}-live-match-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-bottom: 1px solid #f0f0f0;
+        cursor: pointer;
+      }
+      .${SCRIPT_PREFIX}-live-match.collapsed .${SCRIPT_PREFIX}-live-match-header {
+        border-bottom: none;
+      }
+      .${SCRIPT_PREFIX}-live-match-title {
+        flex: 1;
+        font-size: 13px;
+        font-weight: 600;
+        color: #222;
+      }
+      .${SCRIPT_PREFIX}-live-match-count {
+        flex-shrink: 0;
+        padding: 0 7px;
+        border-radius: 999px;
+        background: #f0f5ff;
+        color: #1677ff;
+        font-size: 11px;
+        line-height: 20px;
+      }
+      .${SCRIPT_PREFIX}-live-match-body {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+      }
+      .${SCRIPT_PREFIX}-live-match.collapsed .${SCRIPT_PREFIX}-live-match-body {
+        display: none;
+      }
+      .${SCRIPT_PREFIX}-live-match-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px 8px;
+      }
+      .${SCRIPT_PREFIX}-live-match-toolbar select {
+        flex: 1;
+        min-width: 0;
+      }
+      .${SCRIPT_PREFIX}-live-match-summary {
+        padding: 0 12px 8px;
+        font-size: 12px;
+        color: #666;
+      }
+      .${SCRIPT_PREFIX}-live-match-list {
+        flex: 1;
+        overflow: auto;
+        padding: 0 12px 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .${SCRIPT_PREFIX}-live-match-empty {
+        font-size: 12px;
+        color: #999;
+        padding: 10px 0;
+      }
+      .${SCRIPT_PREFIX}-live-match-item {
+        border: 1px solid #e8e8e8;
+        border-radius: 8px;
+        padding: 8px 9px;
+        background: #fafafa;
+      }
+      .${SCRIPT_PREFIX}-live-match-item-head {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin-bottom: 5px;
+      }
+      .${SCRIPT_PREFIX}-live-match-item-name {
+        flex: 1;
+        min-width: 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: #222;
+        line-height: 1.4;
+      }
+      .${SCRIPT_PREFIX}-live-match-item-score {
+        flex-shrink: 0;
+        padding: 0 7px;
+        border-radius: 999px;
+        background: rgba(76, 175, 80, 0.12);
+        color: #2e7d32;
+        font-size: 11px;
+        line-height: 18px;
+        font-weight: 700;
+      }
+      .${SCRIPT_PREFIX}-live-match-item-meta {
+        font-size: 12px;
+        color: #666;
+        line-height: 1.5;
+        white-space: pre-line;
+        word-break: break-word;
+      }
+      .${SCRIPT_PREFIX}-live-match-item-actions {
+        display: flex;
+        justify-content: flex-end;
+        margin-top: 6px;
+      }
+      .${SCRIPT_PREFIX}-live-match-collapse {
+        flex-shrink: 0;
+        width: 22px;
+        height: 22px;
+        border: none;
+        border-radius: 50%;
+        background: #f5f5f5;
+        color: #666;
+        cursor: pointer;
+      }
+      @media (max-width: 768px) {
+        .${SCRIPT_PREFIX}-live-match {
+          right: 12px;
+          bottom: 168px;
+          width: min(280px, calc(100vw - 24px));
+        }
       }
 
       /* 输入控件 */
@@ -2027,26 +2335,31 @@
       /* Toast通知 */
       .${SCRIPT_PREFIX}-toast-container {
         position: fixed;
-        top: 16px;
-        right: 16px;
+        top: 8px;
+        right: 8px;
         z-index: 100001;
         display: flex;
         flex-direction: column;
-        gap: 8px;
+        gap: 4px;
+        width: min(124px, calc(100vw - 8px));
         pointer-events: none;
       }
       .${SCRIPT_PREFIX}-toast {
         pointer-events: auto;
-        background: #fff;
-        border-left: 4px solid #4CAF50;
+        background: rgba(255,255,255,0.84);
+        backdrop-filter: blur(6px);
+        border-left: 3px solid #4CAF50;
         border-radius: 8px;
-        padding: 12px 16px;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+        padding: 6px 8px;
+        box-sizing: border-box;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         display: flex;
-        align-items: center;
-        gap: 12px;
-        min-width: 300px;
-        max-width: 420px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 5px;
+        width: 100%;
+        min-width: 0;
+        max-width: none;
         transform: translateX(120%);
         opacity: 0;
         transition: transform 0.3s ease, opacity 0.3s ease;
@@ -2057,23 +2370,90 @@
         opacity: 1;
       }
       .${SCRIPT_PREFIX}-toast-info {
-        flex: 1;
         display: flex;
         flex-direction: column;
-        gap: 2px;
+        gap: 4px;
+        min-width: 0;
       }
-      .${SCRIPT_PREFIX}-toast-info strong {
-        font-size: 14px;
+      .${SCRIPT_PREFIX}-toast-header {
+        display: flex;
+        align-items: flex-start;
+        gap: 4px;
+        min-width: 0;
+      }
+      .${SCRIPT_PREFIX}-toast-header strong {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-height: 1.35;
+        font-size: 12px;
+        font-weight: 600;
         color: #222;
       }
+      .${SCRIPT_PREFIX}-toast-score {
+        flex-shrink: 0;
+        padding: 0 5px;
+        border-radius: 999px;
+        background: rgba(76, 175, 80, 0.12);
+        color: #2e7d32;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 16px;
+      }
       .${SCRIPT_PREFIX}-toast-sub {
-        font-size: 12px;
-        color: #888;
+        font-size: 10px;
+        line-height: 1.45;
+        color: #666;
+        white-space: pre-line;
+        word-break: break-word;
+        max-height: 58px;
+        overflow: hidden;
       }
       .${SCRIPT_PREFIX}-toast-actions {
         display: flex;
-        gap: 6px;
-        flex-shrink: 0;
+        gap: 3px;
+        justify-content: flex-end;
+      }
+      @media (max-width: 768px) {
+        .${SCRIPT_PREFIX}-toast-container {
+          right: 8px;
+          width: min(120px, calc(100vw - 8px));
+        }
+      }
+      @media (max-width: 480px) {
+        .${SCRIPT_PREFIX}-toast-container {
+          top: 6px;
+          right: 6px;
+          width: min(116px, calc(100vw - 6px));
+        }
+        .${SCRIPT_PREFIX}-toast {
+          padding: 5px 7px;
+          gap: 4px;
+        }
+        .${SCRIPT_PREFIX}-toast-header strong {
+          font-size: 12px;
+        }
+        .${SCRIPT_PREFIX}-toast-score {
+          font-size: 10px;
+        }
+        .${SCRIPT_PREFIX}-toast-sub {
+          max-height: 52px;
+        }
+        .${SCRIPT_PREFIX}-toast-actions {
+          gap: 3px;
+        }
+        .${SCRIPT_PREFIX}-toast-actions .${SCRIPT_PREFIX}-btn {
+          font-size: 10px;
+        }
+      }
+      @media (max-width: 360px) {
+        .${SCRIPT_PREFIX}-toast-container {
+          width: min(110px, calc(100vw - 6px));
+          left: 6px;
+        }
       }
 
       /* 高分卡片呼吸动画 */
@@ -2094,31 +2474,47 @@
       '.recommend-card-wrap li',
       '.candidate-list li',
       '.geek-list li',
+      '[class*="latest"] li',
+      '[class*="recent"] li',
       '[class*="recommend"] [class*="card"]',
       '[class*="geek"] [class*="card"]',
       '[class*="candidate"] [class*="item"]',
+      '[class*="list"] [class*="card"]',
+      '[class*="list"] > li',
       '.job-card-wrap .job-card-body'
     ];
 
+    let bestCards = [];
+    let bestSelector = null;
     for (const sel of knownSelectors) {
       const cards = document.querySelectorAll(sel);
-      if (cards.length >= 2) {
-        detectedCardSelector = sel;
-        return [...cards];
+      const visibleCards = [...cards].filter(card => !isCardTemporarilyHidden(card));
+      if (visibleCards.length >= 2 && visibleCards.length > bestCards.length) {
+        bestCards = visibleCards;
+        bestSelector = sel;
       }
+    }
+
+    if (bestSelector) {
+      detectedCardSelector = bestSelector;
+      return bestCards;
     }
 
     // 策略2: 启发式检测 - 找包含重复结构且有候选人特征的容器
     const allContainers = document.querySelectorAll('div, ul, section');
+    let bestHeuristicCards = [];
+    let bestHeuristicSelector = null;
     for (const container of allContainers) {
       const children = container.children;
       if (children.length < 2 || children.length > 60) continue;
 
       // 检查子元素是否有候选人特征
       let matchCount = 0;
-      const checkCount = Math.min(children.length, 5);
+      const visibleChildren = [...children].filter(child => !isCardTemporarilyHidden(child));
+      if (visibleChildren.length < 2) continue;
+      const checkCount = Math.min(visibleChildren.length, 5);
       for (let i = 0; i < checkCount; i++) {
-        const child = children[i];
+        const child = visibleChildren[i];
         const text = child.textContent || '';
         const html = child.innerHTML || '';
 
@@ -2148,12 +2544,19 @@
         // 构建选择器
         const tag = container.tagName.toLowerCase();
         const cls = container.className ? '.' + container.className.split(/\s+/).filter(c => c && c.length < 30).join('.') : '';
-        const childTag = children[0].tagName.toLowerCase();
-        detectedCardSelector = `${tag}${cls} > ${childTag}`;
-
-        console.log(`[BOSS助手] 启发式检测到候选人卡片: ${detectedCardSelector} (${children.length} 张)`);
-        return [...children];
+        const childTag = visibleChildren[0].tagName.toLowerCase();
+        const selector = `${tag}${cls} > ${childTag}`;
+        if (visibleChildren.length > bestHeuristicCards.length) {
+          bestHeuristicSelector = selector;
+          bestHeuristicCards = visibleChildren;
+        }
       }
+    }
+
+    if (bestHeuristicSelector) {
+      detectedCardSelector = bestHeuristicSelector;
+      console.log(`[BOSS助手] 启发式检测到候选人卡片: ${detectedCardSelector} (${bestHeuristicCards.length} 张可见卡片)`);
+      return bestHeuristicCards;
     }
 
     return [];
@@ -2161,8 +2564,8 @@
 
   function getCardElements() {
     if (detectedCardSelector) {
-      const cards = document.querySelectorAll(detectedCardSelector);
-      if (cards.length > 0) return [...cards];
+      const cards = [...document.querySelectorAll(detectedCardSelector)].filter(card => !isCardTemporarilyHidden(card));
+      if (cards.length > 0) return cards;
       // 选择器失效，重新检测
       detectedCardSelector = null;
     }
@@ -2229,6 +2632,311 @@
     });
   }
 
+  function scheduleProcessCards(delay = 300) {
+    ensureToggleButton();
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => processCards(), delay);
+  }
+
+  function getDocumentScrollHeight() {
+    return Math.max(
+      document.documentElement?.scrollHeight || 0,
+      document.body?.scrollHeight || 0,
+      document.documentElement?.offsetHeight || 0,
+      document.body?.offsetHeight || 0
+    );
+  }
+
+  function detectAutoScrollStopHint() {
+    const text = (document.body?.innerText || '').replace(/\s+/g, ' ');
+    const patterns = [
+      /已经到底/,
+      /已到底/,
+      /没有更多/,
+      /暂无更多/,
+      /暂无简历/,
+      /没有简历/,
+      /暂无牛人/,
+      /没有牛人/,
+      /没有找到相关/,
+      /为你推荐完了/
+    ];
+    const matched = patterns.find(pattern => pattern.test(text));
+    return matched ? matched.source.replace(/\\|\(|\)|\[|\]|\?|\+|\*/g, '') : '';
+  }
+
+  function isCardTemporarilyHidden(card) {
+    if (!card || !card.isConnected) return true;
+    const style = window.getComputedStyle(card);
+    if (style.display === 'none' || style.visibility === 'hidden') return true;
+    const rect = card.getBoundingClientRect();
+    return rect.width === 0 || rect.height === 0;
+  }
+
+  function setupInteractionHooks() {
+    if (interactionHooksBound) return;
+    interactionHooksBound = true;
+
+    document.addEventListener('click', (event) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (!target) return;
+      const trigger = target.closest('[role="tab"], [class*="tab"], [class*="Tab"], button, a');
+      if (!trigger) return;
+      scheduleProcessCards(350);
+    }, true);
+
+    window.addEventListener('hashchange', () => scheduleProcessCards(350));
+    window.addEventListener('popstate', () => scheduleProcessCards(350));
+  }
+
+  function updateAutoScrollButton() {
+    if (!autoScrollBtn) return;
+    const liveCount = getLiveMatchItems().length;
+    autoScrollBtn.classList.toggle('active', autoScrollState.active);
+    autoScrollBtn.textContent = autoScrollState.active ? '停' : '刷';
+    autoScrollBtn.title = autoScrollState.active
+      ? `停止自动刷取\n当前命中 ${liveCount} 人`
+      : `启动自动刷取\n当前命中 ${liveCount} 人`;
+  }
+
+  function stopAutoScroll(reason = '已停止') {
+    if (autoScrollState.timer) {
+      clearTimeout(autoScrollState.timer);
+      autoScrollState.timer = null;
+    }
+    autoScrollState.active = false;
+    autoScrollState.statusText = reason;
+    updateAutoScrollButton();
+    if (panel && isPanelOpen) refreshPanelContent();
+    console.log(`[BOSS助手] 自动刷取停止: ${reason}`);
+  }
+
+  function runAutoScrollStep() {
+    if (!autoScrollState.active) return;
+
+    processCards();
+
+    const currentTop = window.scrollY || window.pageYOffset || 0;
+    const currentHeight = getDocumentScrollHeight();
+    const movedSinceLast =
+      autoScrollState.lastScrollTop < 0 ||
+      currentTop > autoScrollState.lastScrollTop + 6 ||
+      currentHeight > autoScrollState.lastScrollHeight + 20;
+
+    autoScrollState.stagnantSteps = movedSinceLast ? 0 : autoScrollState.stagnantSteps + 1;
+    autoScrollState.lastScrollTop = currentTop;
+    autoScrollState.lastScrollHeight = currentHeight;
+
+    const cards = getCardElements();
+    autoScrollState.emptySteps = cards.length === 0 ? autoScrollState.emptySteps + 1 : 0;
+
+    const bottomHint = detectAutoScrollStopHint();
+    const atBottom = currentTop + window.innerHeight >= currentHeight - 120;
+    if ((bottomHint && (atBottom || autoScrollState.stagnantSteps >= 1)) ||
+        (autoScrollState.stagnantSteps >= AUTO_SCROLL_STUCK_LIMIT && atBottom) ||
+        (autoScrollState.emptySteps >= 3 && atBottom)) {
+      stopAutoScroll(bottomHint || '已到列表底部');
+      return;
+    }
+
+    window.scrollBy({
+      top: Math.max(Math.floor(window.innerHeight * 0.85), 520),
+      behavior: 'smooth'
+    });
+    scheduleProcessCards(500);
+    autoScrollState.timer = setTimeout(runAutoScrollStep, AUTO_SCROLL_INTERVAL);
+  }
+
+  function startAutoScroll() {
+    if (autoScrollState.active) return;
+    autoScrollState.active = true;
+    autoScrollState.startedAt = Date.now();
+    autoScrollState.lastScrollTop = -1;
+    autoScrollState.lastScrollHeight = -1;
+    autoScrollState.stagnantSteps = 0;
+    autoScrollState.emptySteps = 0;
+    autoScrollState.statusText = '运行中';
+    updateAutoScrollButton();
+    processCards();
+    autoScrollState.timer = setTimeout(runAutoScrollStep, 400);
+    console.log('[BOSS助手] 自动刷取已启动');
+  }
+
+  function toggleAutoScroll() {
+    if (autoScrollState.active) {
+      stopAutoScroll('手动停止');
+    } else {
+      startAutoScroll();
+    }
+  }
+
+  function ensureLiveMatchPanel() {
+    if (!document.body) return;
+    if (liveMatchPanel) return;
+
+    liveMatchPanel = document.createElement('div');
+    liveMatchPanel.className = `${SCRIPT_PREFIX}-live-match`;
+
+    const header = document.createElement('div');
+    header.className = `${SCRIPT_PREFIX}-live-match-header`;
+
+    const title = document.createElement('div');
+    title.className = `${SCRIPT_PREFIX}-live-match-title`;
+    title.textContent = '命中列表';
+
+    const count = document.createElement('div');
+    count.className = `${SCRIPT_PREFIX}-live-match-count`;
+    count.textContent = '0';
+
+    const collapseBtn = document.createElement('button');
+    collapseBtn.className = `${SCRIPT_PREFIX}-live-match-collapse`;
+    collapseBtn.textContent = '▾';
+    collapseBtn.type = 'button';
+
+    header.appendChild(title);
+    header.appendChild(count);
+    header.appendChild(collapseBtn);
+
+    const body = document.createElement('div');
+    body.className = `${SCRIPT_PREFIX}-live-match-body`;
+
+    const toolbar = document.createElement('div');
+    toolbar.className = `${SCRIPT_PREFIX}-live-match-toolbar`;
+
+    liveMatchModeSelect = document.createElement('select');
+    liveMatchModeSelect.className = `${SCRIPT_PREFIX}-select`;
+    liveMatchModeSelect.innerHTML = `
+      <option value="score">分数模式</option>
+      <option value="highlight">高亮关键词模式</option>
+    `;
+    liveMatchModeSelect.value = getLiveMatchMode();
+    liveMatchModeSelect.addEventListener('change', (event) => {
+      config.liveMatchMode = event.target.value === 'highlight' ? 'highlight' : 'score';
+      saveConfig();
+      renderLiveMatchPanel();
+    });
+
+    const autoBtn = document.createElement('button');
+    autoBtn.className = `${SCRIPT_PREFIX}-btn ${SCRIPT_PREFIX}-btn-outline`;
+    autoBtn.textContent = '自动刷取';
+    autoBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      toggleAutoScroll();
+      renderLiveMatchPanel();
+    });
+
+    toolbar.appendChild(liveMatchModeSelect);
+    toolbar.appendChild(autoBtn);
+
+    liveMatchSummaryEl = document.createElement('div');
+    liveMatchSummaryEl.className = `${SCRIPT_PREFIX}-live-match-summary`;
+
+    liveMatchListEl = document.createElement('div');
+    liveMatchListEl.className = `${SCRIPT_PREFIX}-live-match-list`;
+
+    body.appendChild(toolbar);
+    body.appendChild(liveMatchSummaryEl);
+    body.appendChild(liveMatchListEl);
+
+    header.addEventListener('click', () => {
+      liveMatchCollapsed = !liveMatchCollapsed;
+      liveMatchPanel.classList.toggle('collapsed', liveMatchCollapsed);
+      collapseBtn.textContent = liveMatchCollapsed ? '▸' : '▾';
+    });
+    collapseBtn.addEventListener('click', (event) => {
+      event.stopPropagation();
+      header.click();
+    });
+
+    liveMatchPanel.appendChild(header);
+    liveMatchPanel.appendChild(body);
+    liveMatchPanel._countEl = count;
+    liveMatchPanel._autoBtn = autoBtn;
+    document.body.appendChild(liveMatchPanel);
+  }
+
+  function renderLiveMatchPanel() {
+    if (!liveMatchPanel || !liveMatchListEl || !liveMatchSummaryEl) return;
+    if (liveMatchModeSelect && liveMatchModeSelect.value !== getLiveMatchMode()) {
+      liveMatchModeSelect.value = getLiveMatchMode();
+    }
+
+    const items = getLiveMatchItems();
+    if (liveMatchPanel._countEl) {
+      liveMatchPanel._countEl.textContent = String(items.length);
+    }
+    if (liveMatchPanel._autoBtn) {
+      liveMatchPanel._autoBtn.textContent = autoScrollState.active ? '停止刷取' : '自动刷取';
+    }
+
+    liveMatchSummaryEl.textContent = getLiveMatchMode() === 'highlight'
+      ? `实时显示命中自定义高亮关键词的候选人，当前 ${items.length} 人`
+      : `实时显示分数达到通知阈值 ${config.notifyThreshold} 分的候选人，当前 ${items.length} 人`;
+
+    liveMatchListEl.innerHTML = '';
+    if (items.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = `${SCRIPT_PREFIX}-live-match-empty`;
+      empty.textContent = getLiveMatchMode() === 'highlight'
+        ? '还没有命中高亮关键词的候选人。'
+        : '还没有达到分数阈值的候选人。';
+      liveMatchListEl.appendChild(empty);
+      return;
+    }
+
+    items.slice(0, 60).forEach(item => {
+      const wrapper = document.createElement('div');
+      wrapper.className = `${SCRIPT_PREFIX}-live-match-item`;
+
+      const head = document.createElement('div');
+      head.className = `${SCRIPT_PREFIX}-live-match-item-head`;
+
+      const nameEl = document.createElement('div');
+      nameEl.className = `${SCRIPT_PREFIX}-live-match-item-name`;
+      nameEl.textContent = item.name;
+
+      const scoreEl = document.createElement('div');
+      scoreEl.className = `${SCRIPT_PREFIX}-live-match-item-score`;
+      scoreEl.textContent = `${item.score}分`;
+
+      head.appendChild(nameEl);
+      head.appendChild(scoreEl);
+      wrapper.appendChild(head);
+
+      const metaLines = [];
+      if (item.experience != null) metaLines.push(`${item.experience}年经验`);
+      if (item.education) metaLines.push(item.education);
+      if (item.school) metaLines.push(item.school);
+      if (item.company) metaLines.push(`公司: ${item.company}`);
+      if (item.salaryDesc) metaLines.push(`薪资: ${item.salaryDesc}`);
+      if (getLiveMatchMode() === 'highlight' && item.highlightedKeywords.length > 0) {
+        metaLines.push(`高亮词: ${item.highlightedKeywords.join('、')}`);
+      } else if (item.matchedRules.length > 0) {
+        metaLines.push(`命中规则: ${item.matchedRules.slice(0, 3).join('、')}`);
+      }
+
+      const meta = document.createElement('div');
+      meta.className = `${SCRIPT_PREFIX}-live-match-item-meta`;
+      meta.textContent = metaLines.join('\n');
+      wrapper.appendChild(meta);
+
+      const actions = document.createElement('div');
+      actions.className = `${SCRIPT_PREFIX}-live-match-item-actions`;
+
+      const jumpBtn = document.createElement('button');
+      jumpBtn.className = `${SCRIPT_PREFIX}-btn ${SCRIPT_PREFIX}-btn-outline`;
+      jumpBtn.textContent = '跳转';
+      jumpBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        locateLiveMatch(item.key);
+      });
+      actions.appendChild(jumpBtn);
+
+      wrapper.appendChild(actions);
+      liveMatchListEl.appendChild(wrapper);
+    });
+  }
+
   function mergeCandidateJobMetrics(candidate, domCandidate) {
     const merged = { ...candidate };
     const candidatePeriods = Array.isArray(candidate.jobPeriods) ? candidate.jobPeriods : [];
@@ -2254,10 +2962,15 @@
 
   // 为单个卡片渲染评分
   function renderCard(card) {
-    if (card.dataset.bhScored) return;
+    if (card.dataset.bhScored === '1') return;
+
+    if (isCardTemporarilyHidden(card)) {
+      card.dataset.bhScored = 'pending';
+      return;
+    }
 
     // 跳过过小的元素（时间线条目、备注等）
-    if (card.offsetHeight < 60 || card.offsetWidth < 200) {
+    if (card.offsetHeight < 60 || card.offsetWidth < 120) {
       card.dataset.bhScored = 'skip';
       return;
     }
@@ -2295,6 +3008,7 @@
     card.dataset.bhScored = '1';
     card.dataset.bhScore = result.score;
     card.dataset.bhLevel = result.level;
+    card.dataset.bhCandidateKey = buildCandidateKey(candidate);
     card.style.position = 'relative';
 
     // 添加卡片高亮class
@@ -2376,6 +3090,9 @@
     lines.push(`总分: ${result.score}`);
     bindTooltipHover(badge, lines.join('\n'));
 
+    updateLiveMatchEntry(candidate, result, card);
+    renderLiveMatchPanel();
+
     // 高分候选人通知
     notifyHighScoreCandidate(candidate, result, card);
   }
@@ -2385,14 +3102,18 @@
     const cards = getCardElements();
     cards.forEach(card => renderCard(card));
     updateStats();
+    renderLiveMatchPanel();
   }
 
   // 重新评分所有卡片
   function rescoreAllCards() {
+    liveMatchStore.clear();
+    renderLiveMatchPanel();
     const cards = getCardElements();
     cards.forEach(card => {
       card.dataset.bhScored = '';
-      card.querySelectorAll(`.${SCRIPT_PREFIX}-badge, .${SCRIPT_PREFIX}-tooltip, .${SCRIPT_PREFIX}-reject-btn`).forEach(el => el.remove());
+      delete card.dataset.bhCandidateKey;
+      card.querySelectorAll(`.${SCRIPT_PREFIX}-badge, .${SCRIPT_PREFIX}-tooltip, .${SCRIPT_PREFIX}-reject-btn, .${SCRIPT_PREFIX}-keyword-badge`).forEach(el => el.remove());
       card.classList.remove(`${SCRIPT_PREFIX}-card-high`, `${SCRIPT_PREFIX}-card-medium`, `${SCRIPT_PREFIX}-card-low`, `${SCRIPT_PREFIX}-card-rejected`);
       card.style.opacity = '';
     });
@@ -3449,6 +4170,7 @@
 
     // 启动DOM监听
     setupObserver();
+    setupInteractionHooks();
 
     // 首次处理
     setTimeout(() => processCards(), 1000);
@@ -3472,7 +4194,15 @@
     if (!document.body) return;
     if (!hasCandidateCards()) {
       document.querySelectorAll(`.${SCRIPT_PREFIX}-toggle-btn`).forEach(btn => btn.remove());
+      document.querySelectorAll(`.${SCRIPT_PREFIX}-auto-scroll-btn`).forEach(btn => btn.remove());
+      document.querySelectorAll(`.${SCRIPT_PREFIX}-live-match`).forEach(el => el.remove());
       toggleBtn = null;
+      autoScrollBtn = null;
+      liveMatchPanel = null;
+      liveMatchListEl = null;
+      liveMatchSummaryEl = null;
+      liveMatchModeSelect = null;
+      if (autoScrollState.active) stopAutoScroll('页面中未检测到候选人卡片');
       return;
     }
 
@@ -3495,6 +4225,17 @@
       toggleBtn.addEventListener('click', togglePanel);
       document.body.appendChild(toggleBtn);
     }
+
+    autoScrollBtn = document.querySelector(`.${SCRIPT_PREFIX}-auto-scroll-btn`);
+    if (!autoScrollBtn) {
+      autoScrollBtn = document.createElement('button');
+      autoScrollBtn.className = `${SCRIPT_PREFIX}-auto-scroll-btn`;
+      autoScrollBtn.addEventListener('click', toggleAutoScroll);
+      document.body.appendChild(autoScrollBtn);
+    }
+    ensureLiveMatchPanel();
+    updateAutoScrollButton();
+    renderLiveMatchPanel();
   }
 
   function hasCandidateCards() {
