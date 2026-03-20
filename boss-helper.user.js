@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS直聘候选人智能筛选助手
 // @namespace    https://github.com/freekingxx/boss
-// @version      0.1.4
+// @version      0.1.5
 // @description  自动解析推荐牛人卡片信息，根据预设规则评分并高亮显示，帮助快速识别高匹配候选人
 // @author       BossHelper
 // @match        https://www.zhipin.com/*
@@ -41,7 +41,7 @@
   const REMOTE_CACHE_KEY = 'boss_helper_remote_config_v1';
   const REJECTED_KEY = 'boss_helper_rejected_v1';
   const ROLE_URL_KEY = 'boss_helper_role_url';
-  const TOAST_DURATION = 4500;
+  const DEFAULT_TOAST_DURATION = 4500;
   const AUTO_SCROLL_INTERVAL = 1400;
   const AUTO_SCROLL_STUCK_LIMIT = 4;
   const GITHUB_BASE = 'https://raw.githubusercontent.com/freekingxx/boss/main/configs';
@@ -205,6 +205,7 @@
       debugMode: false,
       notifyEnabled: true,
       notifyThreshold: 70,
+      toastDuration: DEFAULT_TOAST_DURATION,
       notifySound: true,
       roleKey: '',
       configUrl: '',
@@ -278,6 +279,7 @@
     // 同步关键词到规则
     syncKeywordsToRules();
     normalizeNotifyThreshold();
+    normalizeToastDuration();
     return config;
   }
 
@@ -355,6 +357,11 @@
     const high = typeof config.thresholdHigh === 'number' ? config.thresholdHigh : 0;
     const raw = typeof config.notifyThreshold === 'number' ? config.notifyThreshold : high;
     config.notifyThreshold = Math.max(high, Math.min(100, raw));
+  }
+
+  function normalizeToastDuration() {
+    const raw = typeof config.toastDuration === 'number' ? config.toastDuration : DEFAULT_TOAST_DURATION;
+    config.toastDuration = Math.max(1000, Math.min(20000, raw));
   }
 
   function syncKeywordsToRules() {
@@ -1384,7 +1391,7 @@
     setTimeout(() => {
       toast.classList.remove('show');
       setTimeout(() => toast.remove(), 300);
-    }, TOAST_DURATION);
+    }, config.toastDuration);
   }
 
   function getToastContainer() {
@@ -3831,6 +3838,38 @@
     notifyThresholdSlider.querySelector('input[type="range"]').dataset.bhControl = 'notify-threshold';
     notifyThresholdSlider.querySelector('.value').dataset.bhControl = 'notify-threshold-value';
     content.appendChild(notifyThresholdSlider);
+
+    const toastRow = document.createElement('div');
+    toastRow.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:8px;';
+    const toastLabel = document.createElement('label');
+    toastLabel.textContent = '弹窗停留时长(秒)';
+    toastLabel.style.fontSize = '13px';
+    toastLabel.style.minWidth = '110px';
+
+    const toastInput = document.createElement('input');
+    toastInput.type = 'number';
+    toastInput.min = '1';
+    toastInput.max = '20';
+    toastInput.step = '0.5';
+    toastInput.value = String((config.toastDuration || DEFAULT_TOAST_DURATION) / 1000);
+    toastInput.className = `${SCRIPT_PREFIX}-input`;
+    toastInput.style.width = '88px';
+    toastInput.addEventListener('change', () => {
+      const seconds = parseFloat(toastInput.value);
+      config.toastDuration = Math.round((Number.isFinite(seconds) ? seconds : 4.5) * 1000);
+      normalizeToastDuration();
+      toastInput.value = String(config.toastDuration / 1000);
+      saveConfig();
+    });
+
+    const toastHint = document.createElement('span');
+    toastHint.style.cssText = 'font-size:12px; color:#666;';
+    toastHint.textContent = '范围 1-20 秒';
+
+    toastRow.appendChild(toastLabel);
+    toastRow.appendChild(toastInput);
+    toastRow.appendChild(toastHint);
+    content.appendChild(toastRow);
 
     // 提示音开关
     const soundRow = document.createElement('div');
