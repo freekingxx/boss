@@ -63,7 +63,8 @@
     {
       "id": "finance_bg", "name": "金融背景加分", "field": "rawText",
       "type": "bonus", "operator": "containsAny",
-      "value": ["量化", "券商", "基金", "期货", "交易系统", "高频交易", "低延迟", "证券", "投行", "对冲基金", "私募"],
+      "value": ["量化研究", "量化交易", "量化策略", "交易系统", "高频交易", "低延迟交易", "券商", "证券公司", "期货公司", "公募基金", "私募基金", "对冲基金", "投行", "做市商"],
+      "excludeKeywords": ["可量化", "量化指标", "量化评估", "量化目标", "量化结果", "量化分析"],
       "score": 10, "enabled": true
     },
     {
@@ -107,7 +108,7 @@
       "type": "penalty", "operator": "workGap", "value": null, "score": -8, "enabled": true
     }
   ],
-  "positiveKeywords": ["C++", "算法", "数据结构", "量化", "高频", "低延迟", "多线程", "并发", "性能优化", "Linux", "系统编程", "STL", "CUDA", "FPGA", "网络编程", "TCP", "内存管理", "Boost"],
+  "positiveKeywords": ["C++", "算法", "数据结构", "量化交易", "量化研究", "量化策略", "高频交易", "低延迟交易", "多线程", "并发", "性能优化", "Linux", "系统编程", "STL", "CUDA", "FPGA", "网络编程", "TCP", "内存管理", "Boost"],
   "negativeKeywords": ["外包", "培训", "实习", "兼职"],
   "thresholdHigh": 70,
   "thresholdLow": 40,

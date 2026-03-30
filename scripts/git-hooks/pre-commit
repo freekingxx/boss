@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET="boss-helper.user.js"
+
+extract_version() {
+  sed -n 's|^// @version[[:space:]]\+||p' | head -n1 | tr -d '[:space:]'
+}
+
+version_gt() {
+  local new_version="$1"
+  local old_version="$2"
+  local new_parts old_parts i new_part old_part
+
+  if [[ ! "$new_version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+    return 1
+  fi
+  if [[ ! "$old_version" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+    return 1
+  fi
+
+  IFS='.' read -r -a new_parts <<< "$new_version"
+  IFS='.' read -r -a old_parts <<< "$old_version"
+
+  for i in 0 1 2; do
+    new_part="${new_parts[i]:-0}"
+    old_part="${old_parts[i]:-0}"
+    if ((10#$new_part > 10#$old_part)); then
+      return 0
+    fi
+    if ((10#$new_part < 10#$old_part)); then
+      return 1
+    fi
+  done
+
+  return 1
+}
+
+if git diff --cached --quiet; then
+  exit 0
+fi
+
+staged_target="$(git diff --cached --name-only -- "$TARGET" || true)"
+if [[ "$staged_target" != "$TARGET" ]]; then
+  echo "ERROR: 本次提交未包含 $TARGET。"
+  echo "按当前仓库规则，每次提交都必须同步更新 userscript 头部 @version。"
+  exit 1
+fi
+
+staged_diff="$(git diff --cached -U0 -- "$TARGET")"
+if ! grep -Eq '^[+-]// @version[[:space:]]+' <<< "$staged_diff"; then
+  echo "ERROR: 检测到 $TARGET 已暂存，但 @version 未变更。"
+  echo "请先更新 userscript 头部版本号后再提交。"
+  exit 1
+fi
+
+new_version="$(git show ":$TARGET" | extract_version)"
+if [[ -z "$new_version" ]]; then
+  echo "ERROR: 无法从暂存区的 $TARGET 中解析 @version。"
+  exit 1
+fi
+
+old_version=""
+if git rev-parse --verify HEAD >/dev/null 2>&1 && git cat-file -e "HEAD:$TARGET" 2>/dev/null; then
+  old_version="$(git show "HEAD:$TARGET" | extract_version)"
+fi
+
+if [[ -n "$old_version" ]]; then
+  if [[ "$new_version" == "$old_version" ]]; then
+    echo "ERROR: @version 未递增，当前仍为 $new_version。"
+    exit 1
+  fi
+
+  if ! version_gt "$new_version" "$old_version"; then
+    echo "ERROR: @version 必须递增。当前提交版本: $new_version，上一版本: $old_version。"
+    exit 1
+  fi
+fi
+
+exit 0

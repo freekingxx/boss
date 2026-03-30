@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS直聘候选人智能筛选助手
 // @namespace    https://github.com/freekingxx/boss
-// @version      0.1.5
+// @version      0.1.6
 // @description  自动解析推荐牛人卡片信息，根据预设规则评分并高亮显示，帮助快速识别高匹配候选人
 // @author       BossHelper
 // @match        https://www.zhipin.com/*
@@ -1128,7 +1128,7 @@
       // containsAny 特殊处理
       if (rule.operator === 'containsAny' && Array.isArray(rule.value) && rule.value.length > 0) {
         const text = typeof fieldValue === 'string' ? fieldValue : '';
-        const matchedKeywords = rule.value.filter(v => text.includes(v));
+        const matchedKeywords = getMatchedKeywordsByRule(rule, text, false);
         if (matchedKeywords.length > 0) {
           if (rule.type === 'knockout') {
             return { score: 0, level: 'low', matchedRules: [{ ...rule, applied: true, matchedKeywords }] };
@@ -1166,17 +1166,7 @@
       if (rule.operator === 'containsAnyWord' && Array.isArray(rule.value) && rule.value.length > 0) {
         const text = typeof fieldValue === 'string' ? fieldValue : '';
         if (text) {
-          const matchedKeywords = rule.value.filter(keyword => {
-            if (/^[a-zA-Z0-9+#_./-]+$/.test(keyword)) {
-              // 英文关键词：用前后非字母断言做单词边界匹配
-              try {
-                const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                return new RegExp('(?<![a-zA-Z])' + escaped + '(?![a-zA-Z])', 'i').test(text);
-              } catch (e) { return text.includes(keyword); }
-            }
-            // 中文关键词：直接 includes
-            return text.includes(keyword);
-          });
+          const matchedKeywords = getMatchedKeywordsByRule(rule, text, true);
           if (matchedKeywords.length > 0) {
             const delta = rule.score * matchedKeywords.length;
             score += delta;
@@ -1260,6 +1250,58 @@
     return { score, level, matchedRules, highlightedKeywords };
   }
 
+  function getMatchedKeywordsByRule(rule, text, preciseWordMode) {
+    if (typeof text !== 'string' || !Array.isArray(rule?.value) || rule.value.length === 0) return [];
+    const excludeKeywords = Array.isArray(rule.excludeKeywords) ? rule.excludeKeywords.filter(Boolean) : [];
+    const excludedRanges = collectExcludedRanges(text, excludeKeywords);
+    return rule.value.filter((keyword) => keywordMatchesText(text, keyword, preciseWordMode, excludedRanges));
+  }
+
+  function keywordMatchesText(text, keyword, preciseWordMode, excludedRanges) {
+    const matchRanges = collectKeywordRanges(text, keyword, preciseWordMode);
+    if (matchRanges.length === 0) return false;
+    return matchRanges.some((range) => !isRangeCoveredByExcludedRanges(range, excludedRanges));
+  }
+
+  function collectExcludedRanges(text, excludeKeywords) {
+    const ranges = [];
+    excludeKeywords.forEach((keyword) => {
+      ranges.push(...collectKeywordRanges(text, keyword, false));
+    });
+    return ranges;
+  }
+
+  function collectKeywordRanges(text, keyword, preciseWordMode) {
+    if (!text || !keyword) return [];
+    const ranges = [];
+
+    if (preciseWordMode && /^[a-zA-Z0-9+#_./-]+$/.test(keyword)) {
+      try {
+        const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp('(?<![a-zA-Z])' + escaped + '(?![a-zA-Z])', 'ig');
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+          ranges.push({ start: match.index, end: match.index + match[0].length });
+        }
+        return ranges;
+      } catch (e) {
+        // 回退到普通子串匹配
+      }
+    }
+
+    let start = text.indexOf(keyword);
+    while (start !== -1) {
+      ranges.push({ start, end: start + keyword.length });
+      start = text.indexOf(keyword, start + keyword.length);
+    }
+    return ranges;
+  }
+
+  function isRangeCoveredByExcludedRanges(range, excludedRanges) {
+    if (!Array.isArray(excludedRanges) || excludedRanges.length === 0) return false;
+    return excludedRanges.some((excludedRange) => range.start >= excludedRange.start && range.end <= excludedRange.end);
+  }
+
   function evaluateCondition(rule, fieldValue, candidate) {
     const { operator, value } = rule;
 
@@ -1290,7 +1332,7 @@
       case 'containsAny':
         if (!Array.isArray(value) || value.length === 0) return false;
         if (typeof fieldValue === 'string') {
-          return value.some(v => fieldValue.includes(v));
+          return getMatchedKeywordsByRule(rule, fieldValue, false).length > 0;
         }
         return false;
       case 'regex':
@@ -3653,6 +3695,7 @@
     // 保存
     form.querySelector(`#${SCRIPT_PREFIX}-rule-save`).addEventListener('click', () => {
       const newRule = {
+        ...(isNew ? {} : config.rules[index]),
         id: rule.id,
         name: form.querySelector('[data-field="name"]').value || '自定义规则',
         field: form.querySelector('[data-field="field"]').value,
