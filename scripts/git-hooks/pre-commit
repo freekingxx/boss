@@ -4,7 +4,7 @@ set -euo pipefail
 TARGET="boss-helper.user.js"
 
 extract_version() {
-  sed -n 's|^// @version[[:space:]]\+||p' | head -n1 | tr -d '[:space:]'
+  sed -n 's|^// @version[[:space:]][[:space:]]*||p' | head -n1 | tr -d '[:space:]'
 }
 
 version_gt() {

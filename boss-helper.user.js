@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS直聘候选人智能筛选助手
 // @namespace    https://github.com/freekingxx/boss
-// @version      0.1.6
+// @version      0.1.7
 // @description  自动解析推荐牛人卡片信息，根据预设规则评分并高亮显示，帮助快速识别高匹配候选人
 // @author       BossHelper
 // @match        https://www.zhipin.com/*
@@ -1443,6 +1443,7 @@
 
   function getLiveMatchItems() {
     return [...liveMatchStore.values()]
+      .filter(item => !isRejected(item.name))
       .filter(item => shouldShowInLiveMatch({
         score: item.score,
         highlightedKeywords: item.highlightedKeywords
@@ -1777,7 +1778,7 @@
   let liveMatchListEl = null;
   let liveMatchSummaryEl = null;
   let liveMatchModeSelect = null;
-  let liveMatchCollapsed = false;
+  let liveMatchCollapsed = true;
   let interactionHooksBound = false;
   const liveMatchStore = new Map();
   const autoScrollState = {
@@ -2825,6 +2826,7 @@
 
     liveMatchPanel = document.createElement('div');
     liveMatchPanel.className = `${SCRIPT_PREFIX}-live-match`;
+    liveMatchPanel.classList.toggle('collapsed', liveMatchCollapsed);
 
     const header = document.createElement('div');
     header.className = `${SCRIPT_PREFIX}-live-match-header`;
@@ -2839,7 +2841,7 @@
 
     const collapseBtn = document.createElement('button');
     collapseBtn.className = `${SCRIPT_PREFIX}-live-match-collapse`;
-    collapseBtn.textContent = '▾';
+    collapseBtn.textContent = liveMatchCollapsed ? '▸' : '▾';
     collapseBtn.type = 'button';
 
     header.appendChild(title);
@@ -3080,6 +3082,7 @@
       toggleRejected(candidateName);
       rejectBtn.classList.toggle('active');
       card.classList.toggle(`${SCRIPT_PREFIX}-card-rejected`);
+      renderLiveMatchPanel();
     });
     card.appendChild(rejectBtn);
     if (isRejected(candidateName)) {
