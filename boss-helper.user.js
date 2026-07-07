@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS直聘候选人智能筛选助手
 // @namespace    https://github.com/freekingxx/boss
-// @version      0.1.8
+// @version      0.1.9
 // @description  自动解析推荐牛人卡片信息，根据预设规则评分并高亮显示，帮助快速识别高匹配候选人
 // @author       BossHelper
 // @match        https://www.zhipin.com/*
@@ -228,29 +228,76 @@
   let config = null;
   const configListeners = [];
 
-  // 「不合适」标记 — name → timestamp
+  // 「不合适」标记 — candidate key/name → timestamp
   let rejectedMap = {};
 
   function loadRejected() {
     try { rejectedMap = JSON.parse(GM_getValue(REJECTED_KEY, '{}')); }
     catch (e) { rejectedMap = {}; }
+    if (!rejectedMap || typeof rejectedMap !== 'object' || Array.isArray(rejectedMap)) {
+      rejectedMap = {};
+    }
   }
   function saveRejected() { GM_setValue(REJECTED_KEY, JSON.stringify(rejectedMap)); }
-  function isRejected(name) { return !!rejectedMap[name]; }
-  function toggleRejected(name) {
-    if (rejectedMap[name]) delete rejectedMap[name];
-    else rejectedMap[name] = Date.now();
-    saveRejected();
+  function normalizeRejectedKey(value) {
+    return typeof value === 'string' ? value.trim() : '';
   }
-
-  function buildCandidateKey(candidate) {
+  function normalizeCandidateName(candidate) {
+    const name = normalizeRejectedKey(candidate?.name);
+    return name && name !== '未知' && name !== '未知候选人' ? name : '';
+  }
+  function getCandidateStableId(candidate) {
+    if (!candidate || typeof candidate !== 'object') return '';
+    const id = candidate.id || candidate.geekId || candidate.encryptGeekId ||
+      candidate.uid || candidate.userId || candidate.encryptUserId;
+    return id == null ? '' : String(id).trim();
+  }
+  function buildCandidateProfileKey(candidate) {
+    const name = normalizeCandidateName(candidate);
+    if (!name) return '';
     return [
-      candidate.name || '',
+      name,
       candidate.school || '',
       candidate.company || '',
       candidate.experience ?? '',
       candidate.salaryDesc || ''
-    ].join('||');
+    ].map(value => String(value).trim()).join('||');
+  }
+  function buildCandidateKey(candidate) {
+    const stableId = getCandidateStableId(candidate);
+    if (stableId) return `id:${stableId}`;
+    const profileKey = buildCandidateProfileKey(candidate);
+    return profileKey ? `profile:${profileKey}` : '';
+  }
+  function getRejectedKeys(candidateOrName) {
+    if (!candidateOrName) return [];
+    if (typeof candidateOrName === 'string') {
+      const name = normalizeRejectedKey(candidateOrName);
+      return name ? [name] : [];
+    }
+    const candidate = candidateOrName;
+    const profileKey = buildCandidateProfileKey(candidate);
+    return [
+      buildCandidateKey(candidate),
+      profileKey ? `profile:${profileKey}` : '',
+      normalizeCandidateName(candidate)
+    ].filter((key, index, keys) => key && keys.indexOf(key) === index);
+  }
+  function isRejected(candidateOrName) {
+    return getRejectedKeys(candidateOrName).some(key => !!rejectedMap[key]);
+  }
+  function toggleRejected(candidateOrName) {
+    const keys = getRejectedKeys(candidateOrName);
+    if (keys.length === 0) return false;
+    const nextRejected = !keys.some(key => !!rejectedMap[key]);
+    if (nextRejected) {
+      const timestamp = Date.now();
+      keys.forEach(key => { rejectedMap[key] = timestamp; });
+    } else {
+      keys.forEach(key => { delete rejectedMap[key]; });
+    }
+    saveRejected();
+    return nextRejected;
   }
 
   function exportJsonFile(data, fileName) {
@@ -709,6 +756,8 @@
     const salary = card?.salary || raw.expectSalary || raw.salary || raw.salaryDesc || '';
     const skills = collectCandidateSkills(raw, card, works);
     const status = card?.applyStatusDesc || raw.applyStatusDesc || card?.status || raw.status || raw.jobStatus || raw.activeStatus || '';
+    const id = card?.encryptGeekId || card?.geekId || card?.geekUid || card?.uid || card?.userId || card?.encryptUserId ||
+      raw.encryptGeekId || raw.geekId || raw.geekUid || raw.uid || raw.userId || raw.encryptUserId || '';
 
     // 解析性别
     let gender = null;
@@ -738,6 +787,7 @@
     const jobMetrics = computeJobMetrics(metricsSource, experience);
 
     return {
+      id,
       name,
       age: typeof age === 'number' ? age : null,
       education: education || null,
@@ -1384,7 +1434,7 @@
 
   function notifyHighScoreCandidate(candidate, result, cardElement) {
     if (!config.notifyEnabled) return;
-    if (isRejected(candidate.name)) return; // 已标记不合适，跳过通知
+    if (isRejected(candidate)) return; // 已标记不合适，跳过通知
     if (result.score < config.notifyThreshold) return;
     const key = candidate.name + '_' + result.score;
     if (notifiedCandidates.has(key)) return;
@@ -1425,6 +1475,7 @@
     const key = buildCandidateKey(candidate);
     liveMatchStore.set(key, {
       key,
+      id: candidate.id || '',
       name: candidate.name || '未知候选人',
       score: result.score,
       level: result.level,
@@ -1443,7 +1494,7 @@
 
   function getLiveMatchItems() {
     return [...liveMatchStore.values()]
-      .filter(item => !isRejected(item.name))
+      .filter(item => !isRejected(item))
       .filter(item => shouldShowInLiveMatch({
         score: item.score,
         highlightedKeywords: item.highlightedKeywords
@@ -3095,20 +3146,20 @@
     card.appendChild(badge);
 
     // 「不合适」标记按钮
-    const candidateName = candidate.name;
+    const rejected = isRejected(candidate);
     const rejectBtn = document.createElement('span');
-    rejectBtn.className = `${SCRIPT_PREFIX}-reject-btn` + (isRejected(candidateName) ? ' active' : '');
+    rejectBtn.className = `${SCRIPT_PREFIX}-reject-btn` + (rejected ? ' active' : '');
     rejectBtn.textContent = '✕ 不合适';
     rejectBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       e.preventDefault();
-      toggleRejected(candidateName);
-      rejectBtn.classList.toggle('active');
-      card.classList.toggle(`${SCRIPT_PREFIX}-card-rejected`);
+      const nextRejected = toggleRejected(candidate);
+      rejectBtn.classList.toggle('active', nextRejected);
+      card.classList.toggle(`${SCRIPT_PREFIX}-card-rejected`, nextRejected);
       renderLiveMatchPanel();
     });
     card.appendChild(rejectBtn);
-    if (isRejected(candidateName)) {
+    if (rejected) {
       card.classList.add(`${SCRIPT_PREFIX}-card-rejected`);
     }
 
