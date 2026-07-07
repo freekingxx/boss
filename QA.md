@@ -252,3 +252,26 @@
 - `node --check boss-helper.user.js` 语法检查通过
 - `git diff --check -- boss-helper.user.js QA.md` 检查通过
 - 浏览器/Tampermonkey 实际页面烟测待执行
+
+## Q12: 如何主动检查并更新脚本到远端新版本？
+
+**日期**: 2026-07-07
+
+**问题**: 希望远端 GitHub 有新版本时，可以在页面里主动点击 update 更新脚本。
+
+**回答**:
+
+### 实现
+- 在配置面板“高级设置”底部新增“检查更新”按钮，显示当前脚本版本
+- 点击后拉取远端 `boss-helper.user.js`，解析 `@version` 并和当前版本比较
+- 发现远端版本更高时，按钮切换为“打开更新”，点击会打开 Tampermonkey 更新/安装页面
+- 在 Tampermonkey 菜单中新增“检查脚本更新”，可不打开配置面板直接检查
+
+### 限制
+- 是否有新版本以远端 `@version` 递增为准；远端只有代码提交但未更新版本号时，会提示当前已是最新版本
+- 脚本不在页面内静默改写自身，更新动作交给 Tampermonkey 接管
+
+### 验证
+- `node --check boss-helper.user.js` 语法检查通过
+- `git diff --check -- boss-helper.user.js QA.md` 检查通过
+- 浏览器/Tampermonkey 实际页面烟测待执行

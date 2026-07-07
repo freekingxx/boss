@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS直聘候选人智能筛选助手
 // @namespace    https://github.com/freekingxx/boss
-// @version      0.1.9
+// @version      0.1.10
 // @description  自动解析推荐牛人卡片信息，根据预设规则评分并高亮显示，帮助快速识别高匹配候选人
 // @author       BossHelper
 // @match        https://www.zhipin.com/*
@@ -44,6 +44,7 @@
   const DEFAULT_TOAST_DURATION = 4500;
   const AUTO_SCROLL_INTERVAL = 1400;
   const AUTO_SCROLL_STUCK_LIMIT = 4;
+  const SCRIPT_DOWNLOAD_URL = 'https://raw.githubusercontent.com/freekingxx/boss/main/boss-helper.user.js';
   const GITHUB_BASE = 'https://raw.githubusercontent.com/freekingxx/boss/main/configs';
   const ROLE_CONFIGS = {
     dev:     { name: '开发岗', url: `${GITHUB_BASE}/role-dev.json` },
@@ -478,6 +479,67 @@
   }
 
   // --- 远程配置 ---
+
+  function getCurrentScriptVersion() {
+    if (typeof GM_info === 'object' && GM_info?.script?.version) {
+      return GM_info.script.version;
+    }
+    return '0.1.10';
+  }
+
+  function extractScriptVersion(scriptText) {
+    const match = String(scriptText || '').match(/^\s*\/\/\s*@version\s+([^\s]+)/m);
+    return match ? match[1] : '';
+  }
+
+  function compareVersions(a, b) {
+    const left = String(a || '').split('.').map(n => parseInt(n, 10) || 0);
+    const right = String(b || '').split('.').map(n => parseInt(n, 10) || 0);
+    const len = Math.max(left.length, right.length);
+    for (let i = 0; i < len; i++) {
+      const diff = (left[i] || 0) - (right[i] || 0);
+      if (diff !== 0) return diff;
+    }
+    return 0;
+  }
+
+  function openScriptUpdatePage() {
+    window.open(SCRIPT_DOWNLOAD_URL + '?t=' + Date.now(), '_blank', 'noopener');
+  }
+
+  function checkScriptUpdate(onDone) {
+    GM_xmlhttpRequest({
+      method: 'GET',
+      url: SCRIPT_DOWNLOAD_URL + '?t=' + Date.now(),
+      timeout: 10000,
+      onload: function (resp) {
+        if (resp.status !== 200) {
+          if (onDone) onDone(false, '检查失败: HTTP ' + resp.status);
+          return;
+        }
+        const remoteVersion = extractScriptVersion(resp.responseText);
+        if (!remoteVersion) {
+          if (onDone) onDone(false, '检查失败: 未读取到远端版本号');
+          return;
+        }
+        const currentVersion = getCurrentScriptVersion();
+        const hasUpdate = compareVersions(remoteVersion, currentVersion) > 0;
+        if (onDone) {
+          onDone(true, hasUpdate ? '发现新版本' : '当前已是最新版本', {
+            currentVersion,
+            remoteVersion,
+            hasUpdate
+          });
+        }
+      },
+      onerror: function () {
+        if (onDone) onDone(false, '检查失败: 网络错误');
+      },
+      ontimeout: function () {
+        if (onDone) onDone(false, '检查失败: 请求超时');
+      }
+    });
+  }
 
   function fetchRemoteConfig(url, onDone, force) {
     if (!url) {
@@ -4190,6 +4252,51 @@
     });
     content.appendChild(epInput);
 
+    const updateRow = document.createElement('div');
+    updateRow.style.cssText = 'display:flex; align-items:center; gap:8px; margin-top:12px; padding-top:10px; border-top:1px solid #f0f0f0;';
+
+    const updateBtn = document.createElement('button');
+    updateBtn.className = `${SCRIPT_PREFIX}-btn ${SCRIPT_PREFIX}-btn-outline`;
+    updateBtn.textContent = '检查更新';
+    updateBtn.style.cssText = 'flex-shrink:0;';
+
+    const updateStatus = document.createElement('span');
+    updateStatus.style.cssText = 'font-size:12px; color:#666; line-height:1.5;';
+    updateStatus.textContent = `当前版本 ${getCurrentScriptVersion()}`;
+
+    updateBtn.addEventListener('click', () => {
+      if (updateBtn.dataset.hasUpdate === '1') {
+        openScriptUpdatePage();
+        return;
+      }
+      updateBtn.disabled = true;
+      updateBtn.textContent = '检查中...';
+      updateStatus.textContent = `当前版本 ${getCurrentScriptVersion()}，正在检查远端版本...`;
+      checkScriptUpdate((ok, message, info) => {
+        updateBtn.disabled = false;
+        if (!ok) {
+          updateBtn.textContent = '重新检查';
+          updateStatus.textContent = message;
+          return;
+        }
+        if (info.hasUpdate) {
+          updateBtn.dataset.hasUpdate = '1';
+          updateBtn.textContent = '打开更新';
+          updateBtn.className = `${SCRIPT_PREFIX}-btn`;
+          updateStatus.textContent = `发现新版本 ${info.remoteVersion}，当前 ${info.currentVersion}。点击打开 Tampermonkey 更新页。`;
+        } else {
+          delete updateBtn.dataset.hasUpdate;
+          updateBtn.textContent = '重新检查';
+          updateBtn.className = `${SCRIPT_PREFIX}-btn ${SCRIPT_PREFIX}-btn-outline`;
+          updateStatus.textContent = `${message}: ${info.currentVersion}`;
+        }
+      });
+    });
+
+    updateRow.appendChild(updateBtn);
+    updateRow.appendChild(updateStatus);
+    content.appendChild(updateRow);
+
     return section;
   }
 
@@ -4325,6 +4432,21 @@
         console.log(`[BOSS助手] 探测模式: ${config.probeMode ? '开启' : '关闭'}`);
       });
       GM_registerMenuCommand('重新评分', rescoreAllCards);
+      GM_registerMenuCommand('检查脚本更新', () => {
+        checkScriptUpdate((ok, message, info) => {
+          if (!ok) {
+            alert(message);
+            return;
+          }
+          if (info.hasUpdate) {
+            if (confirm(`发现新版本 ${info.remoteVersion}，当前版本 ${info.currentVersion}。是否打开更新页面？`)) {
+              openScriptUpdatePage();
+            }
+          } else {
+            alert(`${message}: ${info.currentVersion}`);
+          }
+        });
+      });
     }
 
     // 启动DOM监听
