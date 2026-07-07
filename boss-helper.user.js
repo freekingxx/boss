@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         BOSS直聘候选人智能筛选助手
 // @namespace    https://github.com/freekingxx/boss
-// @version      0.1.7
+// @version      0.1.8
 // @description  自动解析推荐牛人卡片信息，根据预设规则评分并高亮显示，帮助快速识别高匹配候选人
 // @author       BossHelper
 // @match        https://www.zhipin.com/*
@@ -2106,7 +2106,14 @@
         backdrop-filter: blur(10px);
       }
       .${SCRIPT_PREFIX}-live-match.collapsed {
-        max-height: 48px;
+        width: 34px;
+        height: 34px;
+        max-height: 34px;
+        min-height: 34px;
+        border-radius: 50%;
+        background: #1677ff;
+        border-color: #1677ff;
+        box-shadow: 0 2px 12px rgba(22,119,255,0.34);
       }
       .${SCRIPT_PREFIX}-live-match-header {
         display: flex;
@@ -2117,7 +2124,15 @@
         cursor: pointer;
       }
       .${SCRIPT_PREFIX}-live-match.collapsed .${SCRIPT_PREFIX}-live-match-header {
+        width: 100%;
+        height: 100%;
+        justify-content: center;
+        padding: 0;
         border-bottom: none;
+      }
+      .${SCRIPT_PREFIX}-live-match.collapsed .${SCRIPT_PREFIX}-live-match-title,
+      .${SCRIPT_PREFIX}-live-match.collapsed .${SCRIPT_PREFIX}-live-match-count {
+        display: none;
       }
       .${SCRIPT_PREFIX}-live-match-title {
         flex: 1;
@@ -2221,6 +2236,14 @@
         background: #f5f5f5;
         color: #666;
         cursor: pointer;
+      }
+      .${SCRIPT_PREFIX}-live-match.collapsed .${SCRIPT_PREFIX}-live-match-collapse {
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        color: #fff;
+        font-size: 15px;
+        line-height: 1;
       }
       @media (max-width: 768px) {
         .${SCRIPT_PREFIX}-live-match {
